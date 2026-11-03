@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Hello Word",
-    "description": "Adds a sidebar item below Plugins; clicking it opens a blank panel that shows \"hello word\"."
+    "title": "Workbench",
+    "description": "Adds a Workbench entry below Plugins; clicking it opens a workbench panel on the DeepSeek-branded navy gradient backdrop."
   }
 }

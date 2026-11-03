@@ -1,8 +1,7 @@
-/**
- * Host half of the Hello Word bundle.
- *
- * The requested feature is pure Client UI: a sidebar entry plus a central
- * panel. The host half exists so the bundle has an installable row (inventory
- * entry, enable/disable switch, display metadata); it registers nothing.
- */
-export function apply() {}
+// 由 scripts/build.mjs 从 src/host/** 生成 —— 不要手改本文件。
+// src/host/index.ts
+function apply() {
+}
+export {
+  apply
+};

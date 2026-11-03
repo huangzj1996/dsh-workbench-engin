@@ -2,9 +2,14 @@
   "name": "dsh-hello-word",
   "version": "1.0.0",
   "private": true,
-  "description": "在侧边栏「插件」下方新增一个菜单项，点击后显示一个写着 hello word 的空白面板。",
+  "description": "工作台面板：DeepSeek 官网 hero 同款深蓝 WebGL 流体背景，入口在侧边栏「新会话」旁。",
   "icon": "icon.svg",
   "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "dev": "node scripts/build.mjs --watch"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -21,11 +26,19 @@
     "icon.svg"
   ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,
       "inject": []
     }
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.9.3"
   }
 }

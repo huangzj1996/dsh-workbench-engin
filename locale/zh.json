@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Hello Word",
-    "description": "在侧边栏「插件」下方新增一个菜单项，点击后在中栏显示一个只写着 hello word 的空白面板。"
+    "title": "工作台",
+    "description": "在侧边栏「插件」下方新增「工作台」入口，点击后在中栏显示 DeepSeek 品牌深蓝渐变背景的工作台面板。"
   }
 }
