@@ -1,0 +1,7 @@
+# Generated bundles: keep the exact committed bytes on checkout.
+# With core.autocrlf on Windows the working copy was CRLF while `npm run build`
+# rewrites LF, so `git status` reported client.js/index.js as modified even though
+# `git diff` was empty. Marking them binary-text-disabled pins the checkout to
+# the indexed bytes and the phantom modification disappears.
+client.js -text
+index.js -text
