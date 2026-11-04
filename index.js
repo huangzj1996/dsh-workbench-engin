@@ -88,10 +88,48 @@ function serializeWorkbench(scene) {
 import * as nodeFs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+
+// src/shared/workbench/context-card.ts
+var CONTEXT_CARD_PURPOSE_PLACEHOLDER = "\uFF08\u5F85\u8865\u5145\uFF09";
+function contextCardMarkdown(scene) {
+  const purpose = scene.description !== void 0 && scene.description.trim() !== "" ? scene.description.trim() : CONTEXT_CARD_PURPOSE_PLACEHOLDER;
+  const id = scene.id;
+  return [
+    `# ${scene.name}`,
+    "",
+    `> \u5DE5\u4F5C\u53F0 id\uFF1A\`${id}\``,
+    "",
+    "## \u7528\u9014",
+    "",
+    purpose,
+    "",
+    "## \u8FB9\u754C",
+    "",
+    `- \u8FD9\u4EFD\u8BF4\u660E\u662F\u7ED9 AI \u7684\u4E0A\u4E0B\u6587\uFF0C\u4E0D\u53C2\u4E0E\u6E32\u67D3\uFF1B\u5DE5\u4F5C\u53F0\u7684\u6743\u5A01\u914D\u7F6E\u662F \`${id}/${id}.json\`\u3002`,
+    "- \u4FEE\u6539\u8FD9\u4EFD\u8BF4\u660E\u4E0D\u4F1A\u5F71\u54CD\u5DE5\u4F5C\u53F0\u754C\u9762\uFF1B\u4FEE\u6539 JSON \u624D\u4F1A\u3002",
+    "- \u53EA\u63CF\u8FF0\u8FD9\u4E2A\u5DE5\u4F5C\u53F0\u672C\u8EAB\uFF0C\u4E0D\u5199\u8DE8\u5DE5\u4F5C\u53F0\u7684\u7EA6\u5B9A\u3002",
+    "",
+    "## \u53EF\u4EE5\u653E\u4EC0\u4E48",
+    "",
+    "- \u8FD9\u4E2A\u5DE5\u4F5C\u53F0\u89E3\u51B3\u4EC0\u4E48\u95EE\u9898\u3001\u505A\u5230\u4EC0\u4E48\u7B97\u5B8C\u6210\uFF08\u6210\u529F\u6807\u51C6\uFF09\u3002",
+    "- \u5404\u4E2A\u5B50\u9762\u677F\u5404\u81EA\u8D1F\u8D23\u4EC0\u4E48\u3001\u5F7C\u6B64\u600E\u4E48\u914D\u5408\u3002",
+    "- \u4F9B AI \u53C2\u8003\u7684\u80CC\u666F\u8D44\u6599\u3001\u672F\u8BED\u4E0E\u65E2\u6709\u7EA6\u5B9A\u3002",
+    "",
+    "## \u4E0D\u8981\u653E\u4EC0\u4E48",
+    "",
+    "- \u5BC6\u7801\u3001\u4EE4\u724C\u3001\u79C1\u94A5\u7B49\u654F\u611F\u4FE1\u606F\u3002",
+    "- \u4E0E\u8FD9\u4E2A\u5DE5\u4F5C\u53F0\u65E0\u5173\u7684\u901A\u7528\u8D44\u6599\u3002",
+    "- \u9700\u8981\u5B9E\u65F6\u540C\u6B65\u7684\u72B6\u6001\uFF08\u4EE5 JSON \u6587\u4EF6\u548C\u754C\u9762\u4E3A\u51C6\uFF09\u3002",
+    ""
+  ].join("\n");
+}
+
+// src/host/workbench/store.ts
 var CONFIG_DIR = "dsh-hello-word";
 var CONFIG_FILE = "config.json";
 var INDEX_FILE = "index.json";
 var INDEX_VERSION = 1;
+var CONTEXT_CARD_SUFFIX = "-context.md";
 var MAX_FILE_BYTES = 256 * 1024;
 var nodeFsAdapter = {
   readFile: (file, encoding) => nodeFs.readFile(file, encoding),
@@ -203,6 +241,22 @@ async function readSceneOrNull(fs, file) {
     return parseWorkbench(await fs.readFile(file, "utf8"));
   } catch {
     return null;
+  }
+}
+async function ensureContextCard(fs, root, scene) {
+  const file = path.join(root, scene.id, `${scene.id}${CONTEXT_CARD_SUFFIX}`);
+  try {
+    await fs.stat(file);
+    return;
+  } catch (error) {
+    if (!isNotFound(error)) {
+      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6\u5B9A\u4F4D\u5361\uFF1A${describe(error)}`);
+    }
+  }
+  try {
+    await fs.writeFile(file, contextCardMarkdown(scene), "utf8");
+  } catch (error) {
+    throw new WorkbenchStoreError("write-failed", describe(error));
   }
 }
 function assertWorkbenchId(value) {
@@ -342,6 +396,7 @@ function createWorkbenchStore(options) {
     } catch (error) {
       throw new WorkbenchStoreError("write-failed", describe(error));
     }
+    await ensureContextCard(fs, root, scene);
     const { data: index } = await readIndex(fs, root);
     if (!index.workbenches.some((entry) => entry.id === id)) {
       const nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;

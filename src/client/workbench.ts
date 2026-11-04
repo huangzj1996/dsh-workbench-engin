@@ -1,19 +1,22 @@
 /**
  * The Workbench main panel: the shell that resolves the workbench root, lists
- * the workbenches found there and renders the one the user opens.
+ * the workbenches found there, creates new ones and opens the one the user
+ * picks.
  *
- * Tickets #3–#4 scope: first-run root setup, the empty state, the list with its
- * three reconciliation flags, readable errors, and the grid view of one
- * workbench (panel chrome + renderer table). The config drawer and creating
- * workbenches arrive in later tickets.
+ * Tickets #3–#5 scope: first-run root setup, the empty state, the list with its
+ * three reconciliation flags, readable errors, the grid view of one workbench,
+ * the create flow (auto id + context card saved by the Host) and the config
+ * drawer/autosave owned by `scene-editor`.
  */
 import * as React from 'react';
 
+import { CreateWorkbenchDialog } from './create-workbench-dialog';
 import { HeroBackdrop, HERO_BASE } from './hero-backdrop';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
-import { WorkbenchGrid } from './workbench-grid';
+import { SceneEditor } from './scene-editor';
+import { createWorkbenchScene } from './workbench-draft';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
-import { DEFAULT_COLS, type WorkbenchScene } from '../shared/workbench/schema';
+import type { WorkbenchScene } from '../shared/workbench/schema';
 
 /** The main-panel key this bundle owns. */
 export const PANEL_ID = 'hello-word';
@@ -69,6 +72,14 @@ const PANEL_CSS = `
 .dshwb-badge-missing{background:rgba(255,196,84,.16);color:#ffd88e}
 .dshwb-badge-corrupt{background:rgba(255,112,96,.18);color:#ffb4a8}
 .dshwb-loading{margin:0;color:rgba(226,234,248,.62);font-size:12.5px}
+.dshwb-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(4,9,18,.6);backdrop-filter:blur(3px)}
+.dshwb-dialog{box-sizing:border-box;width:100%;max-width:420px;padding:18px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.94);box-shadow:0 24px 60px rgba(0,0,0,.45);color:#eef3fb}
+.dshwb-dialog-title{margin:0 0 6px;font-size:16px;font-weight:600;line-height:1.4}
+.dshwb-dialog-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
+.dshwb-dialog-hint{margin:6px 0 0;color:rgba(226,234,248,.5);font-size:11.5px;line-height:1.6}
+.dshwb-label-spaced{margin-top:12px}
+.dshwb-idrow{display:flex;align-items:center;gap:8px}
+.dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
 `;
 
 /** Panel status while the root + list are being resolved. */
@@ -82,7 +93,7 @@ type PanelState =
 type PanelView =
   | { kind: 'list' }
   | { kind: 'opening'; id: string }
-  | { kind: 'scene'; scene: WorkbenchScene }
+  | { kind: 'scene'; scene: WorkbenchScene; configure?: boolean }
   | { kind: 'open-error'; id: string; message: string };
 
 /** Props injected by the panel slot, plus the Host RPC the entry composes in. */
@@ -120,6 +131,28 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const [savingRoot, setSavingRoot] = React.useState(false);
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [view, setView] = React.useState<PanelView>({ kind: 'list' });
+  const [creating, setCreating] = React.useState(false);
+
+  /** Ids already in the root, so a new workbench picks a colliding-free id. */
+  const takenIds = React.useMemo(
+    () => (state.phase === 'ready' ? state.entries.map((entry) => entry.id) : []),
+    [state],
+  );
+
+  const openCreate = (): void => setCreating(true);
+
+  /** Persist a brand-new workbench, then refresh the list and open it. */
+  const createWorkbench = async (name: string, id: string): Promise<void> => {
+    if (rpc === undefined) {
+      throw new WorkbenchRpcError('internal', tr('error.connection', '连接服务不可用，请稍后重试'));
+    }
+    const scene = createWorkbenchScene(id, name, tr('panel.new.reserved', '占位面板'));
+    const saved = (await rpc.save(scene)).scene;
+    const list = await rpc.list();
+    setState({ phase: 'ready', root: list.root, entries: list.entries });
+    setCreating(false);
+    setView({ kind: 'scene', scene: saved, configure: true });
+  };
 
   const load = React.useCallback(async (): Promise<void> => {
     if (rpc === undefined) {
@@ -266,6 +299,11 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         React.createElement('span', { className: 'dshwb-root-path', title: root }, root),
         React.createElement(
           'button',
+          { type: 'button', className: 'dshwb-primary', onClick: openCreate },
+          tr('bar.new', '新建工作台'),
+        ),
+        React.createElement(
+          'button',
           { type: 'button', className: 'dshwb-link', onClick: () => setAttempt((value) => value + 1) },
           tr('list.refresh', '刷新'),
         ),
@@ -285,7 +323,16 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
               { className: 'dshwb-card-sub' },
               tr(
                 'list.empty.sub',
-                '这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或稍后用「新建工作台」创建。',
+                '这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或点「新建工作台」创建。',
+              ),
+            ),
+            React.createElement(
+              'div',
+              { className: 'dshwb-actions' },
+              React.createElement(
+                'button',
+                { type: 'button', className: 'dshwb-primary', onClick: openCreate },
+                tr('list.empty.action', '新建工作台'),
               ),
             ),
           )
@@ -319,41 +366,35 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
           ),
     );
 
-  const renderScene = (scene: WorkbenchScene): React.ReactElement => {
-    const cols = scene.cols ?? DEFAULT_COLS;
-    return React.createElement(
-      'div',
-      { className: 'dshwb-scene' },
-      React.createElement(
+  /** The scene view: the editor owns live state, autosave and the drawer. */
+  const renderSceneEditor = (scene: WorkbenchScene): React.ReactElement => {
+    const client = rpc;
+    if (client === undefined) {
+      return React.createElement(
         'div',
-        { className: 'dshwb-scene-bar' },
-        React.createElement(
-          'button',
-          { type: 'button', className: 'dshwb-link', onClick: () => setView({ kind: 'list' }) },
-          `← ${tr('scene.back', '返回列表')}`,
-        ),
+        { className: 'dshwb-card' },
+        React.createElement('p', { className: 'dshwb-card-sub' }, tr('error.connection', '连接服务不可用，请稍后重试')),
         React.createElement(
           'div',
-          { className: 'dshwb-scene-heading' },
-          React.createElement('h2', { className: 'dshwb-scene-name', title: scene.name }, scene.name),
-          React.createElement('span', { className: 'dshwb-scene-id', title: scene.id }, scene.id),
+          { className: 'dshwb-actions' },
+          React.createElement(
+            'button',
+            { type: 'button', className: 'dshwb-secondary', onClick: () => void load() },
+            tr('list.retry', '重试'),
+          ),
         ),
-        React.createElement(
-          'span',
-          { className: 'dshwb-scene-meta' },
-          `${cols} ${tr('scene.colsUnit', '列')} · ${scene.panels.length} ${tr('scene.panelsUnit', '个子面板')}`,
-        ),
-        React.createElement(
-          'button',
-          { type: 'button', className: 'dshwb-link', onClick: () => void openWorkbench(scene.id) },
-          tr('scene.refresh', '刷新'),
-        ),
-      ),
-      scene.description !== undefined &&
-        scene.description.trim() !== '' &&
-        React.createElement('p', { className: 'dshwb-scene-desc' }, scene.description),
-      React.createElement(WorkbenchGrid, { scene, tr }),
-    );
+      );
+    }
+    return React.createElement(SceneEditor, {
+      key: scene.id,
+      scene,
+      tr,
+      client,
+      defaultDrawerOpen: view.kind === 'scene' && view.configure === true,
+      onBack: () => void load(),
+      onReload: () => void openWorkbench(scene.id),
+      onCreateWorkbench: openCreate,
+    });
   };
 
   const renderOpenError = (id: string, message: string): React.ReactElement =>
@@ -389,7 +430,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       body = renderRootForm();
     } else if (view.kind === 'scene') {
       sceneView = true;
-      body = renderScene(view.scene);
+      body = renderSceneEditor(view.scene);
     } else if (view.kind === 'opening') {
       body = React.createElement('p', { className: 'dshwb-loading' }, tr('scene.opening', '正在打开…'));
     } else if (view.kind === 'open-error') {
@@ -443,6 +484,13 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       { className: sceneView ? 'dshwb-content dshwb-content-scene' : 'dshwb-content' },
       sceneView ? body : React.createElement('div', { className: 'dshwb-stack' }, body),
     ),
+    creating &&
+      React.createElement(CreateWorkbenchDialog, {
+        translate: tr,
+        takenIds,
+        onClose: () => setCreating(false),
+        onCreate: createWorkbench,
+      }),
   );
 }
 

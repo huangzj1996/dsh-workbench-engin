@@ -9,6 +9,7 @@ import * as nodeFs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { contextCardMarkdown } from '../../shared/workbench/context-card';
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import type {
   RootConfig,
@@ -30,6 +31,9 @@ const CONFIG_FILE = 'config.json';
 /** The index file under the workbench root, and its on-disk version. */
 export const INDEX_FILE = 'index.json';
 export const INDEX_VERSION = 1;
+
+/** Suffix of the per-workbench context card: `<id>-context.md`. */
+export const CONTEXT_CARD_SUFFIX = '-context.md';
 
 /** One workbench file may not exceed this size; larger files are refused. */
 export const MAX_FILE_BYTES = 256 * 1024;
@@ -221,6 +225,30 @@ async function readSceneOrNull(fs: FsLike, file: string): Promise<WorkbenchScene
   }
 }
 
+/**
+ * Ensure `<id>/<id>-context.md` exists.
+ *
+ * The card is written when a workbench is first created (the first `save` of a
+ * directory) and then belongs to the AI/user: a later config save must never
+ * overwrite it, so an existing card — even an empty or hand-edited one — wins.
+ */
+async function ensureContextCard(fs: FsLike, root: string, scene: WorkbenchScene): Promise<void> {
+  const file = path.join(root, scene.id, `${scene.id}${CONTEXT_CARD_SUFFIX}`);
+  try {
+    await fs.stat(file);
+    return;
+  } catch (error) {
+    if (!isNotFound(error)) {
+      throw new WorkbenchStoreError('file-corrupt', `无法读取定位卡：${describe(error)}`);
+    }
+  }
+  try {
+    await fs.writeFile(file, contextCardMarkdown(scene), 'utf8');
+  } catch (error) {
+    throw new WorkbenchStoreError('write-failed', describe(error));
+  }
+}
+
 /** Reject an illegal id before any path is built from it. */
 function assertWorkbenchId(value: unknown): string {
   if (!isWorkbenchId(value)) {
@@ -375,6 +403,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     } catch (error) {
       throw new WorkbenchStoreError('write-failed', describe(error));
     }
+    await ensureContextCard(fs, root, scene);
     const { data: index } = await readIndex(fs, root);
     if (!index.workbenches.some((entry) => entry.id === id)) {
       const nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;

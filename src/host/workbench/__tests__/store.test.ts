@@ -240,9 +240,41 @@ describe('save', () => {
     const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
     expect(saved).toEqual(scene);
     const workbenchDir = await readdir(path.join(root, 'demo'));
-    expect(workbenchDir).toEqual(['demo.json']);
+    expect(workbenchDir.sort()).toEqual(['demo-context.md', 'demo.json']);
     const indexText = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
     expect(indexText.workbenches).toEqual([{ id: 'demo', order: 1 }]);
+  });
+
+  it('creates the folder, the JSON, the context card and the index entry on the first save', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    const scene = { id: 'demo', name: 'Demo', description: '给 AI 看的说明', panels: [] };
+
+    await store.save(root, scene);
+
+    const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
+    expect(saved).toEqual(scene);
+    const card = await readFile(path.join(root, 'demo', 'demo-context.md'), 'utf8');
+    expect(card).toContain('# Demo');
+    expect(card).toContain('给 AI 看的说明');
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    expect(index.workbenches).toEqual([{ id: 'demo', order: 1 }]);
+  });
+
+  it('never overwrites an existing context card when the workbench is saved again', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await store.save(root, { id: 'demo', name: 'Demo', panels: [] });
+    const cardFile = path.join(root, 'demo', 'demo-context.md');
+    await writeFile(cardFile, '# AI 改过的定位卡\n', 'utf8');
+
+    await store.save(root, { id: 'demo', name: 'Demo 改名', panels: [] });
+
+    expect(await readFile(cardFile, 'utf8')).toBe('# AI 改过的定位卡\n');
+    const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
+    expect(saved.name).toBe('Demo 改名');
   });
 
   it('rejects a scene larger than 256KB with too-large and writes nothing', async () => {
