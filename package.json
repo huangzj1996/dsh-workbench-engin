@@ -8,6 +8,7 @@
   "scripts": {
     "build": "tsc --noEmit && node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "dev": "node scripts/build.mjs --watch"
   },
   "exports": {
@@ -39,6 +40,7 @@
     "@types/node": "^22.20.5",
     "@types/react": "^18.3.31",
     "esbuild": "^0.28.2",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
   }
 }

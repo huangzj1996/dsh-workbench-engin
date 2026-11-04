@@ -44,8 +44,101 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 
 // src/client/workbench.ts
+var React3 = __toESM(require("react"), 1);
+
+// src/client/create-workbench-dialog.ts
 var React = __toESM(require("react"), 1);
-var PANEL_ID = "hello-word";
+
+// src/client/workbench-name.ts
+function normalizeWorkbenchName(raw) {
+  const trimmed = raw.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+// src/client/create-workbench-dialog.ts
+function CreateWorkbenchDialog(props) {
+  const tr = props.translate;
+  const [draftName, setDraftName] = React.useState("");
+  const inputRef = React.useRef(null);
+  React.useEffect(() => {
+    inputRef.current?.focus();
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape" || event.shiftKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      props.onClose();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [props.onClose]);
+  const create = () => {
+    const name2 = normalizeWorkbenchName(draftName);
+    if (name2 === null) return;
+    props.onCreate(name2);
+  };
+  const canCreate = normalizeWorkbenchName(draftName) !== null;
+  return React.createElement(
+    "div",
+    {
+      className: "dshwb-overlay",
+      onClick: props.onClose
+    },
+    React.createElement(
+      "div",
+      {
+        className: "dshwb-dialog",
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": tr("dialog.title", "创建工作台"),
+        onClick: (event) => event.stopPropagation()
+      },
+      React.createElement("h2", { className: "dshwb-dialog-title" }, tr("dialog.title", "创建工作台")),
+      React.createElement("p", { className: "dshwb-dialog-sub" }, tr("dialog.sub", "给它起个名字，之后可以随时修改。")),
+      React.createElement(
+        "label",
+        { className: "dshwb-label" },
+        tr("dialog.nameLabel", "工作台名称"),
+        React.createElement("input", {
+          ref: inputRef,
+          className: "dshwb-input",
+          type: "text",
+          value: draftName,
+          placeholder: tr("dialog.namePlaceholder", "例如：我的工作台"),
+          autoComplete: "off",
+          spellCheck: false,
+          onChange: (event) => setDraftName(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key !== "Enter") return;
+            event.preventDefault();
+            create();
+          }
+        })
+      ),
+      React.createElement(
+        "div",
+        { className: "dshwb-actions" },
+        React.createElement(
+          "button",
+          { type: "button", className: "dshwb-secondary", onClick: props.onClose },
+          tr("dialog.cancel", "取消")
+        ),
+        React.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-primary",
+            disabled: !canCreate,
+            onClick: create
+          },
+          tr("dialog.create", "创建")
+        )
+      )
+    )
+  );
+}
+
+// src/client/hero-backdrop.ts
+var React2 = __toESM(require("react"), 1);
 var HERO_FALLBACK = "radial-gradient(ellipse at 89% 46%, #777f89 0%, #204a7e 35%, #000 75%)";
 var HERO_MASK = "linear-gradient(#000000fc 0%, #000000e8 8.98%, transparent 100%)";
 var HERO_BASE = "#0f1722";
@@ -355,9 +448,9 @@ function startHeroShader(canvas, firstFrameOnly) {
   };
 }
 function HeroBackdrop() {
-  const layerRef = React.useRef(null);
-  const canvasRef = React.useRef(null);
-  React.useEffect(() => {
+  const layerRef = React2.useRef(null);
+  const canvasRef = React2.useRef(null);
+  React2.useEffect(() => {
     const layer = layerRef.current;
     const canvas = canvasRef.current;
     if (layer === null || canvas === null) return void 0;
@@ -372,7 +465,7 @@ function HeroBackdrop() {
       if (dispose !== null) dispose();
     };
   }, []);
-  return React.createElement(
+  return React2.createElement(
     "div",
     {
       ref: layerRef,
@@ -388,7 +481,7 @@ function HeroBackdrop() {
         WebkitMask: HERO_MASK
       }
     },
-    React.createElement("canvas", {
+    React2.createElement("canvas", {
       ref: canvasRef,
       "aria-hidden": true,
       style: {
@@ -402,6 +495,9 @@ function HeroBackdrop() {
     })
   );
 }
+
+// src/client/workbench.ts
+var PANEL_ID = "hello-word";
 var PANEL_CSS = `
 .dshwb-content{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px}
 .dshwb-stack{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:440px;text-align:center}
@@ -434,42 +530,23 @@ function HelloPanel(props) {
     const value = translate(key);
     return value === key ? fallback : value;
   };
-  const [workbench, setWorkbench] = React.useState(() => rememberedWorkbench);
-  const [dialogOpen, setDialogOpen] = React.useState(false);
-  const [draftName, setDraftName] = React.useState("");
-  const triggerRef = React.useRef(null);
-  const inputRef = React.useRef(null);
-  const closeDialog = React.useCallback(() => {
+  const [workbench, setWorkbench] = React3.useState(() => rememberedWorkbench);
+  const [dialogOpen, setDialogOpen] = React3.useState(false);
+  const triggerRef = React3.useRef(null);
+  const closeDialog = React3.useCallback(() => {
     setDialogOpen(false);
     window.requestAnimationFrame(() => triggerRef.current?.focus());
   }, []);
-  const openDialog = React.useCallback(() => {
-    setDraftName("");
+  const openDialog = React3.useCallback(() => {
     setDialogOpen(true);
   }, []);
-  React.useEffect(() => {
-    if (!dialogOpen) return void 0;
-    const input = inputRef.current;
-    input?.focus();
-    const onKeyDown = (event) => {
-      if (event.key !== "Escape" || event.shiftKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      closeDialog();
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dialogOpen, closeDialog]);
-  const createWorkbench = () => {
-    const next = draftName.trim();
-    if (next === "") return;
-    rememberedWorkbench = next;
-    setWorkbench(next);
+  const createWorkbench = React3.useCallback((name2) => {
+    rememberedWorkbench = name2;
+    setWorkbench(name2);
     closeDialog();
-  };
-  const canCreate = draftName.trim() !== "";
+  }, [closeDialog]);
   const empty = workbench === null;
-  return React.createElement(
+  return React3.createElement(
     "div",
     {
       style: {
@@ -480,19 +557,19 @@ function HelloPanel(props) {
         background: HERO_BASE
       }
     },
-    React.createElement("style", {
+    React3.createElement("style", {
       dangerouslySetInnerHTML: { __html: PANEL_CSS }
     }),
-    React.createElement(HeroBackdrop),
-    React.createElement(
+    React3.createElement(HeroBackdrop),
+    React3.createElement(
       "div",
       { className: "dshwb-content" },
-      empty ? React.createElement(
+      empty ? React3.createElement(
         "div",
         { className: "dshwb-stack" },
-        React.createElement("p", { className: "dshwb-hint" }, tr("empty.hint", "还没有工作台")),
-        React.createElement("p", { className: "dshwb-sub" }, tr("empty.sub", "创建你的第一个工作台，沉淀任务、资料与工作流。")),
-        React.createElement(
+        React3.createElement("p", { className: "dshwb-hint" }, tr("empty.hint", "还没有工作台")),
+        React3.createElement("p", { className: "dshwb-sub" }, tr("empty.sub", "创建你的第一个工作台，沉淀任务、资料与工作流。")),
+        React3.createElement(
           "button",
           {
             type: "button",
@@ -502,12 +579,12 @@ function HelloPanel(props) {
           },
           tr("empty.action", "创建工作台")
         )
-      ) : React.createElement(
+      ) : React3.createElement(
         "div",
         { className: "dshwb-stack" },
-        React.createElement("p", { className: "dshwb-hint" }, tr("created.hint", "当前工作台")),
-        React.createElement("p", { className: "dshwb-created-name" }, workbench),
-        React.createElement(
+        React3.createElement("p", { className: "dshwb-hint" }, tr("created.hint", "当前工作台")),
+        React3.createElement("p", { className: "dshwb-created-name" }, workbench),
+        React3.createElement(
           "button",
           {
             type: "button",
@@ -519,64 +596,11 @@ function HelloPanel(props) {
         )
       )
     ),
-    dialogOpen && React.createElement(
-      "div",
-      {
-        className: "dshwb-overlay",
-        onClick: closeDialog
-      },
-      React.createElement(
-        "div",
-        {
-          className: "dshwb-dialog",
-          role: "dialog",
-          "aria-modal": true,
-          "aria-label": tr("dialog.title", "创建工作台"),
-          onClick: (event) => event.stopPropagation()
-        },
-        React.createElement("h2", { className: "dshwb-dialog-title" }, tr("dialog.title", "创建工作台")),
-        React.createElement("p", { className: "dshwb-dialog-sub" }, tr("dialog.sub", "给它起个名字，之后可以随时修改。")),
-        React.createElement(
-          "label",
-          { className: "dshwb-label" },
-          tr("dialog.nameLabel", "工作台名称"),
-          React.createElement("input", {
-            ref: inputRef,
-            className: "dshwb-input",
-            type: "text",
-            value: draftName,
-            placeholder: tr("dialog.namePlaceholder", "例如：我的工作台"),
-            autoComplete: "off",
-            spellCheck: false,
-            onChange: (event) => setDraftName(event.target.value),
-            onKeyDown: (event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              createWorkbench();
-            }
-          })
-        ),
-        React.createElement(
-          "div",
-          { className: "dshwb-actions" },
-          React.createElement(
-            "button",
-            { type: "button", className: "dshwb-secondary", onClick: closeDialog },
-            tr("dialog.cancel", "取消")
-          ),
-          React.createElement(
-            "button",
-            {
-              type: "button",
-              className: "dshwb-primary",
-              disabled: !canCreate,
-              onClick: createWorkbench
-            },
-            tr("dialog.create", "创建")
-          )
-        )
-      )
-    )
+    dialogOpen && React3.createElement(CreateWorkbenchDialog, {
+      translate: tr,
+      onClose: closeDialog,
+      onCreate: createWorkbench
+    })
   );
 }
 
