@@ -66,10 +66,12 @@ export const DRAWER_CSS = `
 .dshwb-panel-ordinal{flex:0 0 auto;color:rgba(169,206,255,.85);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
 .dshwb-panel-name{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12.5px}
 .dshwb-panel-kind{flex:0 0 auto;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px}
-.dshwb-icon-btn{display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:22px;height:22px;padding:0;border:1px solid rgba(255,255,255,.12);border-radius:6px;background:transparent;color:rgba(226,234,248,.75);font-family:inherit;font-size:11px;line-height:1;cursor:pointer}
-.dshwb-icon-btn:hover:not(:disabled){background:rgba(255,255,255,.1)}
-.dshwb-icon-btn:disabled{opacity:.35;cursor:not-allowed}
-.dshwb-icon-btn-danger:hover:not(:disabled){background:rgba(255,112,96,.18);color:#ffb4a8}
+.dshwb-icon-btn{box-sizing:border-box;display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:12px;line-height:1;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshwb-icon-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
+.dshwb-icon-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-icon-btn:disabled{opacity:.4;cursor:not-allowed}
+.dshwb-icon-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}
 .dshwb-confirm{display:flex;flex:0 0 auto;align-items:center;gap:4px}
 .dshwb-confirm-text{color:#ffb4a8;font-size:11px;white-space:nowrap}
 .dshwb-add-row{display:flex;flex-wrap:wrap;gap:8px}
