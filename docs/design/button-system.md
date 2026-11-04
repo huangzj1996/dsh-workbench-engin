@@ -514,8 +514,9 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 - token island 扩展：`--dsw-alias-label-caption`、`--dsw-alias-border-l1/l2/l4`、`--dsw-alias-state-warn-primary`，以及画布专用 `--dshwb-glass/glass-strong/glass-opaque/overlay/tint/tint-strong/dot-idle`。
 - 迁移文件：`workbench.ts`、`workbench-grid.ts`、`workbench-editor.ts`、`config-drawer.ts`、`renderers/harness.ts`，共 74 条规则改成 token / `color-mix`；面板文字、玻璃容器、行卡片、输入框、开关、状态徽标全部脱离字面量。
 - 去重：`.dshwb-workbench`（workbench.ts 保留）、`.dshwb-idrow/.dshwb-idvalue`（workbench.ts 保留）、`.dshwb-confirm-text`（workbench.ts 一份 canonical）。
-- 自动验证：`npm run check` → 17 个测试文件、165 个用例全绿；`design-tokens clean: 1047 → 见输出（仅 class 规则计数）`；`check:vocabulary` clean。
-- 本轮仍人工确认：重新激活插件后切 light/dark 主题，面板/抽屉/卡片/徽标文字与背景可读；本次没有浏览器截图，故只记录代码级验证。
+- 检查器：`check-design-tokens` 从"只查按钮规则"扩到**每条 class 规则**（含元素前缀与 island 后代），仅豁免 island 规则本身、`var()` fallback、阴影与渐变；`check-scripts.test.ts` 扩到 13 例。
+- 自动验证：`npm run check` → 18 个测试文件、169 个用例全绿；`design-tokens clean: 149 rule(s)`；`vocabulary clean: 38 file(s)`；`build` 产出 `client.js` 139,642 B / `index.js` 26,270 B。
+- 本轮仍待人工确认：重新激活插件后切 light/dark 主题，面板/抽屉/卡片/徽标文字与背景可读；本次没有浏览器截图，故只记录代码级验证。
 
 ## 6. 参考来源
 

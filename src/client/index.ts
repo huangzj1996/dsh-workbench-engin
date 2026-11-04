@@ -30,8 +30,6 @@ const zh: Record<string, string> = {
   'dialog.idHint': 'id 也是文件夹名，创建后不可修改；可以复制给 AI 使用。',
   'dialog.copy': '复制',
   'dialog.copied': '已复制',
-  'created.hint': '当前工作台',
-  'created.action': '新建工作台',
   'root.title': '设置工作台根目录',
   'root.sub': '工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。',
   'root.label': '根目录路径',

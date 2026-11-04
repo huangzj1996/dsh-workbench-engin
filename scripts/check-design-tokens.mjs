@@ -18,8 +18,6 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SCAN_EXTENSIONS = /\.(?:ts|tsx|js|mjs)$/;
 const SKIP_DIRECTORIES = new Set(['node_modules', '__tests__']);
 
-/** The one rule allowed to declare static colour values. */
-const ISLAND_SELECTOR = /\.dshwb-panel-root\b/;
 /** Properties whose colours must come from tokens. */
 const BANNED_PROPERTIES = new Set([
   'color',
@@ -84,11 +82,12 @@ for (const file of files) {
   const text = await readFile(file, 'utf8');
   const relative = path.relative(root, file).replaceAll('\\', '/');
   for (const match of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    // The selector may sit after template-literal text; only its last line is CSS.
+    // CSS-in-TS lives in template strings; only its last line is CSS.
     const selector = (match[1].split(/[\n`]/).pop() ?? match[1]).trim();
-    // CSS-in-TS lives in template strings; only class-selector rules are ours.
-    if (!/^\.[A-Za-z0-9_-]/.test(selector)) continue;
-    if (ISLAND_SELECTOR.test(selector)) continue;
+    // Every workbench class rule is checked, however it is prefixed (e.g. `select.dshwb-input`).
+    if (!/\.dshwb-/.test(selector)) continue;
+    // Only the island rule itself may declare static values; descendants are normal rules.
+    if (selector === '.dshwb-panel-root') continue;
     rules += 1;
     const braceIndex = (match.index ?? 0) + match[0].indexOf('{');
     const line = text.slice(0, braceIndex).split('\n').length;

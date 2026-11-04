@@ -115,6 +115,29 @@ describe('check-design-tokens', () => {
     expect(result.code).toBe(0);
   });
 
+  it('still checks rules nested under the token island', async () => {
+    const root = await fixture({
+      'src/client/panel.ts':
+        'export const CSS = `.dshwb-panel-root .dshwb-item{color:#fff}`;\n',
+    });
+
+    const result = await runCheck('check-design-tokens.mjs', root);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('.dshwb-item');
+  });
+
+  it('checks element-prefixed class rules too', async () => {
+    const root = await fixture({
+      'src/client/panel.ts': 'export const CSS = `select.dshwb-input{color:#fff}`;\n',
+    });
+
+    const result = await runCheck('check-design-tokens.mjs', root);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('#fff');
+  });
+
   it('leaves decorative shadows out of the colour ban', async () => {
     const root = await fixture({
       'src/client/panel.ts':

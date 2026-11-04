@@ -9,6 +9,7 @@
 import * as React from 'react';
 
 import { useCopyToClipboard } from './clipboard';
+import { describeError } from '../shared/workbench/errors';
 import { generateWorkbenchId } from '../shared/workbench/ids';
 import type { Translate } from './translate';
 import { normalizeWorkbenchName } from './workbench-name';
@@ -60,7 +61,7 @@ export function CreateWorkbenchDialog(props: CreateWorkbenchDialogProps): React.
     setBusy(true);
     setError(null);
     void props.onCreate(name, id).catch((cause: unknown) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(describeError(cause));
       setBusy(false);
     });
   };

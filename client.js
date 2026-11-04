@@ -408,7 +408,7 @@ function CreateWorkbenchDialog(props) {
     setBusy(true);
     setError(null);
     void props.onCreate(name2, id).catch((cause) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
+      setError(describeError(cause));
       setBusy(false);
     });
   };
@@ -2465,7 +2465,8 @@ var PANEL_CSS = `
 .dshwb-root-path{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-list{display:flex;flex-direction:column;gap:8px;width:100%;margin:0;padding:0;list-style:none;text-align:left}
 .dshwb-item{display:flex;align-items:center;gap:10px;box-sizing:border-box;width:100%;padding:11px 13px;border:1px solid var(--dsw-alias-border-l2);border-radius:11px;background:var(--dshwb-tint);color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s ease,border-color .15s ease}
-.dshwb-item:hover{background:var(--dshwb-tint-strong);border-color:var(--dsw-alias-border-l4)}
+.dshwb-item:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
+.dshwb-item:active{background:var(--dsw-alias-interactive-bg-active)}
 .dshwb-item:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .dshwb-item-chevron{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-size:15px;line-height:1}
 .dshwb-row{display:flex;flex-direction:column;gap:6px;width:100%}
@@ -3277,8 +3278,6 @@ var zh = {
   "dialog.idHint": "id 也是文件夹名，创建后不可修改；可以复制给 AI 使用。",
   "dialog.copy": "复制",
   "dialog.copied": "已复制",
-  "created.hint": "当前工作台",
-  "created.action": "新建工作台",
   "root.title": "设置工作台根目录",
   "root.sub": "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。",
   "root.label": "根目录路径",
