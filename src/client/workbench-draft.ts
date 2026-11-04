@@ -1,12 +1,12 @@
 /**
- * Draft helpers: build and edit a workbench scene locally before it is saved.
+ * Draft helpers: build and edit a workbench workbench locally before it is saved.
  *
- * The editor mutates a plain scene object and renders from it immediately; the
+ * The editor mutates a plain workbench object and renders from it immediately; the
  * autosave layer persists whatever the object becomes. These helpers are pure
  * so the ordering/identity rules are testable without a DOM, and they replace
- * (never mutate) the scene so React sees a new value.
+ * (never mutate) the workbench so React sees a new value.
  */
-import { DEFAULT_COLS, type WorkbenchPanel, type WorkbenchScene } from '../shared/workbench/schema';
+import { DEFAULT_COLS, type WorkbenchPanel, type Workbench } from '../shared/workbench/schema';
 
 /** The panel types the v1 config drawer offers. */
 export const PANEL_TYPES = ['reserved', 'harness'] as const;
@@ -41,11 +41,11 @@ export function createPanel(
 }
 
 /** A brand-new workbench: four columns and one reserved placeholder panel. */
-export function createWorkbenchScene(
+export function createWorkbench(
   id: string,
   name: string,
   panelTitle: string,
-): WorkbenchScene {
+): Workbench {
   return {
     id,
     name,
@@ -55,35 +55,35 @@ export function createWorkbenchScene(
 }
 
 /** Swap in a new panel list, leaving every other workbench field untouched. */
-function withPanels(scene: WorkbenchScene, panels: WorkbenchPanel[]): WorkbenchScene {
-  return { ...scene, panels };
+function withPanels(workbench: Workbench, panels: WorkbenchPanel[]): Workbench {
+  return { ...workbench, panels };
 }
 
 /** Append a freshly created panel, keeping the existing order. */
 export function addPanel(
-  scene: WorkbenchScene,
+  workbench: Workbench,
   type: PanelType,
   title: string,
-): WorkbenchScene {
-  return withPanels(scene, [...scene.panels, createPanel(type, scene.panels, title)]);
+): Workbench {
+  return withPanels(workbench, [...workbench.panels, createPanel(type, workbench.panels, title)]);
 }
 
-/** Drop one panel by id; an unknown id keeps the same scene object (no save). */
-export function removePanel(scene: WorkbenchScene, id: string): WorkbenchScene {
-  const panels = scene.panels.filter((panel) => panel.id !== id);
-  return panels.length === scene.panels.length ? scene : withPanels(scene, panels);
+/** Drop one panel by id; an unknown id keeps the same workbench object (no save). */
+export function removePanel(workbench: Workbench, id: string): Workbench {
+  const panels = workbench.panels.filter((panel) => panel.id !== id);
+  return panels.length === workbench.panels.length ? workbench : withPanels(workbench, panels);
 }
 
 /** Move one panel by `delta` positions; moving past either end is a no-op. */
-export function movePanel(scene: WorkbenchScene, id: string, delta: number): WorkbenchScene {
-  const from = scene.panels.findIndex((panel) => panel.id === id);
-  if (from === -1) return scene;
+export function movePanel(workbench: Workbench, id: string, delta: number): Workbench {
+  const from = workbench.panels.findIndex((panel) => panel.id === id);
+  if (from === -1) return workbench;
   const to = from + delta;
-  if (to < 0 || to >= scene.panels.length) return scene;
-  const panels = [...scene.panels];
+  if (to < 0 || to >= workbench.panels.length) return workbench;
+  const panels = [...workbench.panels];
   const [moved] = panels.splice(from, 1);
   panels.splice(to, 0, moved);
-  return withPanels(scene, panels);
+  return withPanels(workbench, panels);
 }
 
 /**
@@ -93,27 +93,27 @@ export function movePanel(scene: WorkbenchScene, id: string, delta: number): Wor
  * how the drawer clears `col`/`row` and hands the panel back to the auto flow.
  */
 export function updatePanel(
-  scene: WorkbenchScene,
+  workbench: Workbench,
   id: string,
   patch: Partial<WorkbenchPanel>,
-): WorkbenchScene {
-  const index = scene.panels.findIndex((panel) => panel.id === id);
-  if (index === -1) return scene;
-  const next: WorkbenchPanel = { ...scene.panels[index], ...patch };
+): Workbench {
+  const index = workbench.panels.findIndex((panel) => panel.id === id);
+  if (index === -1) return workbench;
+  const next: WorkbenchPanel = { ...workbench.panels[index], ...patch };
   for (const key of Object.keys(patch)) {
     if (patch[key] === undefined) delete next[key];
   }
-  const panels = [...scene.panels];
+  const panels = [...workbench.panels];
   panels[index] = next;
-  return withPanels(scene, panels);
+  return withPanels(workbench, panels);
 }
 
 /** Patch the workbench-level fields; an `undefined` field is removed. */
 export function updateWorkbench(
-  scene: WorkbenchScene,
-  patch: Partial<Pick<WorkbenchScene, 'name' | 'description' | 'cols'>>,
-): WorkbenchScene {
-  const next: WorkbenchScene = { ...scene, ...patch };
+  workbench: Workbench,
+  patch: Partial<Pick<Workbench, 'name' | 'description' | 'cols'>>,
+): Workbench {
+  const next: Workbench = { ...workbench, ...patch };
   for (const key of Object.keys(patch)) {
     if (patch[key as keyof typeof patch] === undefined) delete next[key];
   }
@@ -128,12 +128,12 @@ export function updateWorkbench(
  * the other type happened to keep.
  */
 export function changePanelType(
-  scene: WorkbenchScene,
+  workbench: Workbench,
   id: string,
   type: PanelType,
-): WorkbenchScene {
-  const current = scene.panels.find((panel) => panel.id === id);
-  if (current === undefined || current.type === type) return scene;
+): Workbench {
+  const current = workbench.panels.find((panel) => panel.id === id);
+  if (current === undefined || current.type === type) return workbench;
   const next: WorkbenchPanel = { ...current, type };
   const defaults: WorkbenchPanel =
     type === 'harness'
@@ -142,5 +142,5 @@ export function changePanelType(
   for (const key of Object.keys(defaults)) {
     if (next[key] === undefined) next[key] = defaults[key];
   }
-  return updatePanel(scene, id, next);
+  return updatePanel(workbench, id, next);
 }

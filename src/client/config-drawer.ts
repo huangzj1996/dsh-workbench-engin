@@ -1,9 +1,9 @@
 /**
  * The config drawer: the whole configuration surface for one workbench.
  *
- * It is a sibling of the grid inside the scene view (380px, scrollable, shrinks
- * to an overlay on narrow windows) and edits the live scene through callbacks —
- * the scene editor owns the state and the autosave, so every keystroke lands in
+ * It is a sibling of the grid inside the workbench view (380px, scrollable, shrinks
+ * to an overlay on narrow windows) and edits the live workbench through callbacks —
+ * the workbench editor owns the state and the autosave, so every keystroke lands in
  * the grid immediately. Layout: three sections, workbench fields, the panel
  * list (add / delete / reorder / select), and the selected panel's properties.
  */
@@ -14,7 +14,7 @@ import { bindingPatch, harnessBinding } from './harness-binding';
 import { findSession } from './harness-view';
 import { useSessionSnapshot } from './use-session-snapshot';
 import { PANEL_TYPES, type PanelType } from './workbench-draft';
-import type { WorkbenchPanel, WorkbenchScene } from '../shared/workbench/schema';
+import type { WorkbenchPanel, Workbench } from '../shared/workbench/schema';
 import { DEFAULT_COLS } from '../shared/workbench/schema';
 import type { HarnessSession, SessionShell } from './session-shell';
 import type { Translate } from './translate';
@@ -27,9 +27,9 @@ export interface WorkbenchFieldsPatch {
   cols?: number;
 }
 
-/** Everything the drawer needs from the scene editor. */
+/** Everything the drawer needs from the workbench editor. */
 export interface ConfigDrawerProps {
-  scene: WorkbenchScene;
+  workbench: Workbench;
   /** Id of the panel whose properties are shown, null when none is selected. */
   selectedPanelId: string | null;
   tr: Translate;
@@ -296,7 +296,7 @@ function Field(props: {
   );
 }
 
-/** A text input bound to a scene/panel field. */
+/** A text input bound to a workbench/panel field. */
 function TextField(props: {
   id: string;
   label: string;
@@ -323,7 +323,7 @@ function TextField(props: {
   );
 }
 
-/** A textarea bound to a scene/panel field. */
+/** A textarea bound to a workbench/panel field. */
 function TextAreaField(props: {
   id: string;
   label: string;
@@ -414,17 +414,17 @@ function TypeFields(props: {
 
 /** The config drawer for one workbench. */
 export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
-  const { scene, tr } = props;
+  const { workbench, tr } = props;
   const { copied, copy } = useCopyToClipboard();
-  const [nameDraft, setNameDraft] = React.useState(scene.name);
+  const [nameDraft, setNameDraft] = React.useState(workbench.name);
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const [addType, setAddType] = React.useState<PanelType>('reserved');
 
   // Follow a disk reload of the same workbench; keyed by id so typing (which
-  // trims the committed scene name) never fights the input draft.
+  // trims the committed workbench name) never fights the input draft.
   React.useEffect(() => {
-    setNameDraft(scene.name);
-  }, [scene.id]);
+    setNameDraft(workbench.name);
+  }, [workbench.id]);
 
   const commitName = (raw: string): void => {
     setNameDraft(raw);
@@ -432,18 +432,18 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
   };
 
   const commitNameOnBlur = (): void => {
-    if (normalizeWorkbenchName(nameDraft) === null) setNameDraft(scene.name);
+    if (normalizeWorkbenchName(nameDraft) === null) setNameDraft(workbench.name);
   };
 
-  const cols = scene.cols ?? DEFAULT_COLS;
-  const selected = scene.panels.find((panel) => panel.id === props.selectedPanelId);
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  const selected = workbench.panels.find((panel) => panel.id === props.selectedPanelId);
 
   const workbenchSection = React.createElement(
     'section',
     { className: 'dshwb-drawer-section' },
     React.createElement('h3', { className: 'dshwb-drawer-section-title' }, tr('drawer.workbench', '工作台')),
     React.createElement(TextField, {
-      id: 'dshwb-scene-name',
+      id: 'dshwb-workbench-name',
       label: tr('drawer.name', '名称'),
       value: nameDraft,
       placeholder: tr('drawer.namePlaceholder', '例如：我的工作台'),
@@ -451,14 +451,14 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
       onBlur: commitNameOnBlur,
     }),
     React.createElement(TextAreaField, {
-      id: 'dshwb-scene-description',
+      id: 'dshwb-workbench-description',
       label: tr('drawer.description', '描述'),
-      value: scene.description ?? '',
+      value: workbench.description ?? '',
       placeholder: tr('drawer.descriptionPlaceholder', '这个工作台是做什么的'),
       onValue: (value: string) => props.onWorkbenchChange({ description: value }),
     }),
     React.createElement(NumberField, {
-      id: 'dshwb-scene-cols',
+      id: 'dshwb-workbench-cols',
       label: tr('drawer.cols', '列数'),
       value: cols,
       min: 1,
@@ -472,7 +472,7 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
       { className: 'dshwb-field' },
       React.createElement(
         'label',
-        { className: 'dshwb-field-label', htmlFor: 'dshwb-scene-id' },
+        { className: 'dshwb-field-label', htmlFor: 'dshwb-workbench-id' },
         tr('drawer.id', 'id（创建后只读）'),
       ),
       React.createElement(
@@ -481,10 +481,10 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
         React.createElement(
           'input',
           {
-            id: 'dshwb-scene-id',
+            id: 'dshwb-workbench-id',
             className: 'dshwb-idvalue',
             type: 'text',
-            value: scene.id,
+            value: workbench.id,
             readOnly: true,
             onFocus: (event: React.FocusEvent<HTMLInputElement>) => event.currentTarget.select(),
           },
@@ -494,7 +494,7 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
           {
             type: 'button',
             className: 'dshwb-secondary',
-            onClick: () => copy(scene.id),
+            onClick: () => copy(workbench.id),
           },
           copied ? tr('drawer.copied', '已复制') : tr('drawer.copy', '复制'),
         ),
@@ -506,12 +506,12 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
     'section',
     { className: 'dshwb-drawer-section' },
     React.createElement('h3', { className: 'dshwb-drawer-section-title' }, tr('drawer.panels', '子面板')),
-    scene.panels.length === 0
+    workbench.panels.length === 0
       ? React.createElement('p', { className: 'dshwb-drawer-hint' }, tr('drawer.noPanels', '还没有子面板。'))
       : React.createElement(
           'ul',
           { className: 'dshwb-panel-list' },
-          scene.panels.map((panel, index) =>
+          workbench.panels.map((panel, index) =>
             React.createElement(
               'li',
               {
@@ -594,7 +594,7 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
                         type: 'button',
                         className: 'dshwb-icon-btn',
                         title: tr('drawer.moveDown', '下移'),
-                        disabled: index === scene.panels.length - 1,
+                        disabled: index === workbench.panels.length - 1,
                         onClick: () => props.onMovePanel(panel.id, 1),
                       },
                       '↓',

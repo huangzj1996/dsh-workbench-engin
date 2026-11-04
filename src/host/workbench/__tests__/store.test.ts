@@ -67,7 +67,7 @@ describe('root pointer', () => {
 
 
 /** Write a minimal valid workbench document under `<root>/<id>/<id>.json`. */
-async function writeScene(root: string, id: string, name = id): Promise<void> {
+async function writeWorkbench(root: string, id: string, name = id): Promise<void> {
   const dir = path.join(root, id);
   await mkdir(dir, { recursive: true });
   await writeFile(
@@ -98,7 +98,7 @@ describe('list: index reconciliation', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    await writeScene(root, 'alpha', 'Alpha');
+    await writeWorkbench(root, 'alpha', 'Alpha');
 
     const first = await store.list(root);
     expect(first.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'adopted', order: 1 }]);
@@ -115,8 +115,8 @@ describe('list: index reconciliation', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    await writeScene(root, 'alpha', 'Alpha');
-    await writeScene(root, 'beta', 'Beta');
+    await writeWorkbench(root, 'alpha', 'Alpha');
+    await writeWorkbench(root, 'beta', 'Beta');
 
     await expect(store.list(root)).resolves.toMatchObject({
       entries: [
@@ -166,9 +166,9 @@ describe('list: index reconciliation', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    await writeScene(root, 'beta', 'Beta');
-    await writeScene(root, 'alpha', 'Alpha');
-    await writeScene(root, 'gamma', 'Gamma');
+    await writeWorkbench(root, 'beta', 'Beta');
+    await writeWorkbench(root, 'alpha', 'Alpha');
+    await writeWorkbench(root, 'gamma', 'Gamma');
     await writeIndex(root, [
       { id: 'beta', order: 2 },
       { id: 'alpha', order: 1 },
@@ -185,7 +185,7 @@ describe('list: index reconciliation', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    await writeScene(root, 'alpha', 'Alpha');
+    await writeWorkbench(root, 'alpha', 'Alpha');
     await writeFile(path.join(root, '.index.json.123.1.tmp'), '{', 'utf8');
     await writeFile(path.join(root, 'alpha', '.alpha.json.123.1.tmp'), '{', 'utf8');
 
@@ -209,13 +209,13 @@ describe('read', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    await writeScene(root, 'alpha', 'Alpha');
+    await writeWorkbench(root, 'alpha', 'Alpha');
 
     const result = await store.read(root, 'alpha');
 
-    expect(result.scene.id).toBe('alpha');
-    expect(result.scene.name).toBe('Alpha');
-    expect(result.scene.panels).toHaveLength(1);
+    expect(result.workbench.id).toBe('alpha');
+    expect(result.workbench.name).toBe('Alpha');
+    expect(result.workbench.panels).toHaveLength(1);
   });
 
   it('reports a missing workbench as not-found', async () => {
@@ -256,12 +256,12 @@ describe('save', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    const scene = { id: 'demo', name: 'Demo', panels: [{ id: 'p1', title: 'One', type: 'reserved' }] };
+    const workbench = { id: 'demo', name: 'Demo', panels: [{ id: 'p1', title: 'One', type: 'reserved' }] };
 
-    await expect(store.save(root, scene)).resolves.toEqual({ scene });
+    await expect(store.save(root, workbench)).resolves.toEqual({ workbench });
 
     const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
-    expect(saved).toEqual(scene);
+    expect(saved).toEqual(workbench);
     const workbenchDir = await readdir(path.join(root, 'demo'));
     expect(workbenchDir.sort()).toEqual(['demo-context.md', 'demo.json']);
     const indexText = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
@@ -272,12 +272,12 @@ describe('save', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    const scene = { id: 'demo', name: 'Demo', description: '给 AI 看的说明', panels: [] };
+    const workbench = { id: 'demo', name: 'Demo', description: '给 AI 看的说明', panels: [] };
 
-    await store.save(root, scene);
+    await store.save(root, workbench);
 
     const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
-    expect(saved).toEqual(scene);
+    expect(saved).toEqual(workbench);
     const card = await readFile(path.join(root, 'demo', 'demo-context.md'), 'utf8');
     expect(card).toContain('# Demo');
     expect(card).toContain('给 AI 看的说明');
@@ -300,23 +300,23 @@ describe('save', () => {
     expect(saved.name).toBe('Demo 改名');
   });
 
-  it('rejects a scene larger than 256KB with too-large and writes nothing', async () => {
+  it('rejects a workbench larger than 256KB with too-large and writes nothing', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
-    const scene = {
+    const workbench = {
       id: 'huge',
       name: 'Huge',
       panels: [{ id: 'p1', title: 'One', type: 'reserved', blob: 'x'.repeat(300 * 1024) }],
     };
 
-    const error = await rejection(store.save(root, scene));
+    const error = await rejection(store.save(root, workbench));
 
     expect(error.code).toBe('too-large');
     await expect(readFile(path.join(root, 'huge', 'huge.json'), 'utf8')).rejects.toThrow();
   });
 
-  it('rejects a scene without a legal id with id-invalid', async () => {
+  it('rejects a workbench without a legal id with id-invalid', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
@@ -326,14 +326,14 @@ describe('save', () => {
     expect(error.code).toBe('id-invalid');
   });
 
-  it('rejects a structurally invalid scene with scene-invalid', async () => {
+  it('rejects a structurally invalid workbench with workbench-invalid', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const store = createWorkbenchStore({ dshHome });
 
     const error = await rejection(store.save(root, { id: 'demo', name: '', panels: [] }));
 
-    expect(error.code).toBe('scene-invalid');
+    expect(error.code).toBe('workbench-invalid');
   });
 
   it('maps a filesystem write failure to write-failed and cleans the temp file', async () => {

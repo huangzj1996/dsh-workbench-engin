@@ -4,7 +4,7 @@
  * Shared by both halves so the request/reply shape, the method names and the
  * error codes cannot drift; nothing here touches the filesystem or the DOM.
  */
-import type { WorkbenchScene } from './schema';
+import type { Workbench } from './schema';
 
 /** The seven methods the Host route accepts. */
 export type WorkbenchRpcMethod =
@@ -59,7 +59,7 @@ export interface WorkbenchRpcValues {
   setRoot: { root: string };
   pickRoot: PickRootResult;
   list: WorkbenchList;
-  read: { scene: WorkbenchScene };
-  save: { scene: WorkbenchScene };
+  read: { workbench: Workbench };
+  save: { workbench: Workbench };
   delete: { id: string };
 }

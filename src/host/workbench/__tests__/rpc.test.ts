@@ -62,7 +62,7 @@ describe('workbench RPC', () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const rpc = createWorkbenchRpc({ dshHome });
-    const scene = { id: 'demo', name: 'Demo', panels: [{ id: 'p1', title: 'One', type: 'reserved' }] };
+    const workbench = { id: 'demo', name: 'Demo', panels: [{ id: 'p1', title: 'One', type: 'reserved' }] };
 
     await expect(rpc.dispatch({ method: 'getRootConfig' })).resolves.toEqual({
       ok: true,
@@ -80,9 +80,9 @@ describe('workbench RPC', () => {
       ok: true,
       value: { root, entries: [] },
     });
-    await expect(rpc.dispatch({ method: 'save', payload: { scene } })).resolves.toEqual({
+    await expect(rpc.dispatch({ method: 'save', payload: { workbench } })).resolves.toEqual({
       ok: true,
-      value: { scene },
+      value: { workbench },
     });
     await expect(rpc.dispatch({ method: 'list' })).resolves.toEqual({
       ok: true,
@@ -93,7 +93,7 @@ describe('workbench RPC', () => {
     });
     await expect(rpc.dispatch({ method: 'read', payload: { id: 'demo' } })).resolves.toEqual({
       ok: true,
-      value: { scene },
+      value: { workbench },
     });
     await expect(rpc.dispatch({ method: 'delete', payload: { id: 'demo' } })).resolves.toEqual({
       ok: true,
@@ -105,21 +105,21 @@ describe('workbench RPC', () => {
     });
   });
 
-  it('creates a workbench from a default scene and lands all three artifacts on disk', async () => {
+  it('creates a workbench from a default workbench and lands all three artifacts on disk', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
     const rpc = createWorkbenchRpc({ dshHome });
     await rpc.dispatch({ method: 'setRoot', payload: { root } });
-    const scene = {
+    const workbench = {
       id: 'demo',
       name: 'Demo',
       cols: 4,
       panels: [{ id: 'panel-1', title: '占位面板', type: 'reserved', text: '' }],
     };
 
-    await expect(rpc.dispatch({ method: 'save', payload: { scene } })).resolves.toEqual({
+    await expect(rpc.dispatch({ method: 'save', payload: { workbench } })).resolves.toEqual({
       ok: true,
-      value: { scene },
+      value: { workbench },
     });
     await expect(rpc.dispatch({ method: 'list' })).resolves.toEqual({
       ok: true,
@@ -127,7 +127,7 @@ describe('workbench RPC', () => {
     });
     await expect(rpc.dispatch({ method: 'read', payload: { id: 'demo' } })).resolves.toEqual({
       ok: true,
-      value: { scene },
+      value: { workbench },
     });
     await expect(readFile(path.join(root, 'demo', 'demo.json'), 'utf8')).resolves.toContain('"name": "Demo"');
     await expect(readFile(path.join(root, 'demo', 'demo-context.md'), 'utf8')).resolves.toContain('# Demo');
@@ -163,7 +163,7 @@ describe('workbench RPC', () => {
       rpc.dispatch({
         method: 'save',
         payload: {
-          scene: {
+          workbench: {
             id: 'huge',
             name: 'Huge',
             panels: [{ id: 'p1', title: 'One', type: 'reserved', blob: 'x'.repeat(300 * 1024) }],
@@ -294,7 +294,7 @@ describe('root picker RPC', () => {
     await rpc.dispatch({ method: 'setRoot', payload: { root: oldRoot } });
     await rpc.dispatch({
       method: 'save',
-      payload: { scene: { id: 'kept', name: 'Kept', panels: [] } },
+      payload: { workbench: { id: 'kept', name: 'Kept', panels: [] } },
     });
 
     const picked = await rpc.dispatch({ method: 'pickRoot', payload: {} });

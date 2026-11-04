@@ -105,7 +105,7 @@ function createWorkbenchClient(ctx) {
     pickRoot: () => call("pickRoot", {}),
     list: () => call("list", {}),
     read: (id) => call("read", { id }),
-    save: (scene) => call("save", { scene }),
+    save: (workbench) => call("save", { workbench }),
     delete: (id) => call("delete", { id })
   };
 }
@@ -872,7 +872,7 @@ async function requestRootPick(client) {
   return { kind: "fallback", reason: "picker-failed" };
 }
 
-// src/client/scene-editor.ts
+// src/client/workbench-editor.ts
 var React10 = __toESM(require("react"), 1);
 
 // src/client/config-drawer.ts
@@ -968,7 +968,7 @@ function createPanel(type, panels, title) {
   }
   return { id, title, type, text: "" };
 }
-function createWorkbenchScene(id, name2, panelTitle) {
+function createWorkbench(id, name2, panelTitle) {
   return {
     id,
     name: name2,
@@ -976,53 +976,53 @@ function createWorkbenchScene(id, name2, panelTitle) {
     panels: [createPanel("reserved", [], panelTitle)]
   };
 }
-function withPanels(scene, panels) {
-  return { ...scene, panels };
+function withPanels(workbench, panels) {
+  return { ...workbench, panels };
 }
-function addPanel(scene, type, title) {
-  return withPanels(scene, [...scene.panels, createPanel(type, scene.panels, title)]);
+function addPanel(workbench, type, title) {
+  return withPanels(workbench, [...workbench.panels, createPanel(type, workbench.panels, title)]);
 }
-function removePanel(scene, id) {
-  const panels = scene.panels.filter((panel) => panel.id !== id);
-  return panels.length === scene.panels.length ? scene : withPanels(scene, panels);
+function removePanel(workbench, id) {
+  const panels = workbench.panels.filter((panel) => panel.id !== id);
+  return panels.length === workbench.panels.length ? workbench : withPanels(workbench, panels);
 }
-function movePanel(scene, id, delta) {
-  const from = scene.panels.findIndex((panel) => panel.id === id);
-  if (from === -1) return scene;
+function movePanel(workbench, id, delta) {
+  const from = workbench.panels.findIndex((panel) => panel.id === id);
+  if (from === -1) return workbench;
   const to = from + delta;
-  if (to < 0 || to >= scene.panels.length) return scene;
-  const panels = [...scene.panels];
+  if (to < 0 || to >= workbench.panels.length) return workbench;
+  const panels = [...workbench.panels];
   const [moved] = panels.splice(from, 1);
   panels.splice(to, 0, moved);
-  return withPanels(scene, panels);
+  return withPanels(workbench, panels);
 }
-function updatePanel(scene, id, patch) {
-  const index = scene.panels.findIndex((panel) => panel.id === id);
-  if (index === -1) return scene;
-  const next = { ...scene.panels[index], ...patch };
+function updatePanel(workbench, id, patch) {
+  const index = workbench.panels.findIndex((panel) => panel.id === id);
+  if (index === -1) return workbench;
+  const next = { ...workbench.panels[index], ...patch };
   for (const key of Object.keys(patch)) {
     if (patch[key] === void 0) delete next[key];
   }
-  const panels = [...scene.panels];
+  const panels = [...workbench.panels];
   panels[index] = next;
-  return withPanels(scene, panels);
+  return withPanels(workbench, panels);
 }
-function updateWorkbench(scene, patch) {
-  const next = { ...scene, ...patch };
+function updateWorkbench(workbench, patch) {
+  const next = { ...workbench, ...patch };
   for (const key of Object.keys(patch)) {
     if (patch[key] === void 0) delete next[key];
   }
   return next;
 }
-function changePanelType(scene, id, type) {
-  const current = scene.panels.find((panel) => panel.id === id);
-  if (current === void 0 || current.type === type) return scene;
+function changePanelType(workbench, id, type) {
+  const current = workbench.panels.find((panel) => panel.id === id);
+  if (current === void 0 || current.type === type) return workbench;
   const next = { ...current, type };
   const defaults = type === "harness" ? { id, title: current.title, type, sessionTitle: "", sessionId: "", pinTarget: [] } : { id, title: current.title, type, text: "" };
   for (const key of Object.keys(defaults)) {
     if (next[key] === void 0) next[key] = defaults[key];
   }
-  return updatePanel(scene, id, next);
+  return updatePanel(workbench, id, next);
 }
 
 // src/client/config-drawer.ts
@@ -1303,29 +1303,29 @@ function TypeFields(props) {
   );
 }
 function ConfigDrawer(props) {
-  const { scene, tr } = props;
+  const { workbench, tr } = props;
   const { copied, copy } = useCopyToClipboard();
-  const [nameDraft, setNameDraft] = React5.useState(scene.name);
+  const [nameDraft, setNameDraft] = React5.useState(workbench.name);
   const [confirmDeleteId, setConfirmDeleteId] = React5.useState(null);
   const [addType, setAddType] = React5.useState("reserved");
   React5.useEffect(() => {
-    setNameDraft(scene.name);
-  }, [scene.id]);
+    setNameDraft(workbench.name);
+  }, [workbench.id]);
   const commitName = (raw) => {
     setNameDraft(raw);
     if (normalizeWorkbenchName(raw) !== null) props.onWorkbenchChange({ name: raw.trim() });
   };
   const commitNameOnBlur = () => {
-    if (normalizeWorkbenchName(nameDraft) === null) setNameDraft(scene.name);
+    if (normalizeWorkbenchName(nameDraft) === null) setNameDraft(workbench.name);
   };
-  const cols = scene.cols ?? DEFAULT_COLS;
-  const selected = scene.panels.find((panel) => panel.id === props.selectedPanelId);
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  const selected = workbench.panels.find((panel) => panel.id === props.selectedPanelId);
   const workbenchSection = React5.createElement(
     "section",
     { className: "dshwb-drawer-section" },
     React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.workbench", "工作台")),
     React5.createElement(TextField, {
-      id: "dshwb-scene-name",
+      id: "dshwb-workbench-name",
       label: tr("drawer.name", "名称"),
       value: nameDraft,
       placeholder: tr("drawer.namePlaceholder", "例如：我的工作台"),
@@ -1333,14 +1333,14 @@ function ConfigDrawer(props) {
       onBlur: commitNameOnBlur
     }),
     React5.createElement(TextAreaField, {
-      id: "dshwb-scene-description",
+      id: "dshwb-workbench-description",
       label: tr("drawer.description", "描述"),
-      value: scene.description ?? "",
+      value: workbench.description ?? "",
       placeholder: tr("drawer.descriptionPlaceholder", "这个工作台是做什么的"),
       onValue: (value) => props.onWorkbenchChange({ description: value })
     }),
     React5.createElement(NumberField, {
-      id: "dshwb-scene-cols",
+      id: "dshwb-workbench-cols",
       label: tr("drawer.cols", "列数"),
       value: cols,
       min: 1,
@@ -1354,7 +1354,7 @@ function ConfigDrawer(props) {
       { className: "dshwb-field" },
       React5.createElement(
         "label",
-        { className: "dshwb-field-label", htmlFor: "dshwb-scene-id" },
+        { className: "dshwb-field-label", htmlFor: "dshwb-workbench-id" },
         tr("drawer.id", "id（创建后只读）")
       ),
       React5.createElement(
@@ -1363,10 +1363,10 @@ function ConfigDrawer(props) {
         React5.createElement(
           "input",
           {
-            id: "dshwb-scene-id",
+            id: "dshwb-workbench-id",
             className: "dshwb-idvalue",
             type: "text",
-            value: scene.id,
+            value: workbench.id,
             readOnly: true,
             onFocus: (event) => event.currentTarget.select()
           }
@@ -1376,7 +1376,7 @@ function ConfigDrawer(props) {
           {
             type: "button",
             className: "dshwb-secondary",
-            onClick: () => copy(scene.id)
+            onClick: () => copy(workbench.id)
           },
           copied ? tr("drawer.copied", "已复制") : tr("drawer.copy", "复制")
         )
@@ -1387,10 +1387,10 @@ function ConfigDrawer(props) {
     "section",
     { className: "dshwb-drawer-section" },
     React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.panels", "子面板")),
-    scene.panels.length === 0 ? React5.createElement("p", { className: "dshwb-drawer-hint" }, tr("drawer.noPanels", "还没有子面板。")) : React5.createElement(
+    workbench.panels.length === 0 ? React5.createElement("p", { className: "dshwb-drawer-hint" }, tr("drawer.noPanels", "还没有子面板。")) : React5.createElement(
       "ul",
       { className: "dshwb-panel-list" },
-      scene.panels.map(
+      workbench.panels.map(
         (panel, index) => React5.createElement(
           "li",
           {
@@ -1468,7 +1468,7 @@ function ConfigDrawer(props) {
                 type: "button",
                 className: "dshwb-icon-btn",
                 title: tr("drawer.moveDown", "下移"),
-                disabled: index === scene.panels.length - 1,
+                disabled: index === workbench.panels.length - 1,
                 onClick: () => props.onMovePanel(panel.id, 1)
               },
               "↓"
@@ -1845,13 +1845,13 @@ var GRID_CSS = `
 .dshwb-grid-empty{margin:0;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.7}
 `;
 function WorkbenchGrid(props) {
-  const { scene, tr, shell } = props;
-  const cols = scene.cols ?? DEFAULT_COLS;
+  const { workbench, tr, shell } = props;
+  const cols = workbench.cols ?? DEFAULT_COLS;
   return React9.createElement(
     "div",
     { className: "dshwb-grid-wrap" },
     React9.createElement("style", { dangerouslySetInnerHTML: { __html: GRID_CSS } }),
-    scene.panels.length === 0 ? React9.createElement(
+    workbench.panels.length === 0 ? React9.createElement(
       "p",
       { className: "dshwb-grid-empty" },
       tr(
@@ -1864,7 +1864,7 @@ function WorkbenchGrid(props) {
         className: "dshwb-grid",
         style: { gridTemplateColumns: gridTemplateColumns(cols) }
       },
-      scene.panels.map(
+      workbench.panels.map(
         (panel, index) => React9.createElement(PanelFrame, {
           key: panel.id,
           panel,
@@ -1948,12 +1948,12 @@ function workbenchOptionLabel(tr, entry) {
   return label === "" ? name2 : `${name2} · ${label}`;
 }
 
-// src/client/scene-editor.ts
+// src/client/workbench-editor.ts
 var AUTOSAVE_DELAY_MS = 300;
-var SCENE_CSS = `
-.dshwb-scene{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
-.dshwb-scene-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
-.dshwb-scene-body>.dshwb-grid-wrap{flex:1;min-width:0}
+var WORKBENCH_EDITOR_CSS = `
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
+.dshwb-workbench-body>.dshwb-grid-wrap{flex:1;min-width:0}
 .dshwb-save-status{flex:0 0 auto;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap}
 .dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:#ffb4a8;font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
@@ -1964,10 +1964,10 @@ function readableError(error) {
   if (error instanceof WorkbenchRpcError) return error.message;
   return error instanceof Error ? error.message : String(error);
 }
-function SceneEditor(props) {
+function WorkbenchEditor(props) {
   const { tr, client } = props;
-  const [scene, setScene] = React10.useState(props.scene);
-  const [lastSaved, setLastSaved] = React10.useState(props.scene);
+  const [workbench, setWorkbench] = React10.useState(props.workbench);
+  const [lastSaved, setLastSaved] = React10.useState(props.workbench);
   const [saveError, setSaveError] = React10.useState(null);
   const [saving, setSaving] = React10.useState(false);
   const [drawerOpen, setDrawerOpen] = React10.useState(props.defaultDrawerOpen === true);
@@ -1975,13 +1975,13 @@ function SceneEditor(props) {
   const [deleting, setDeleting] = React10.useState(false);
   const [actionError, setActionError] = React10.useState(null);
   const [selectedPanelId, setSelectedPanelId] = React10.useState(
-    props.scene.panels[0]?.id ?? null
+    props.workbench.panels[0]?.id ?? null
   );
-  const sceneRef = React10.useRef(scene);
-  sceneRef.current = scene;
+  const workbenchRef = React10.useRef(workbench);
+  workbenchRef.current = workbench;
   const lastSavedRef = React10.useRef(lastSaved);
   lastSavedRef.current = lastSaved;
-  const retrySceneRef = React10.useRef(null);
+  const retryWorkbenchRef = React10.useRef(null);
   const timerRef = React10.useRef(null);
   const seqRef = React10.useRef(0);
   const deletingRef = React10.useRef(false);
@@ -1993,72 +1993,72 @@ function SceneEditor(props) {
   }, []);
   const flush = React10.useCallback(async () => {
     clearTimer();
-    const target = sceneRef.current;
+    const target = workbenchRef.current;
     if (target === lastSavedRef.current) return true;
     const seq = seqRef.current + 1;
     seqRef.current = seq;
     setSaving(true);
     try {
-      const saved = (await client.save(target)).scene;
+      const saved = (await client.save(target)).workbench;
       if (seq !== seqRef.current) return true;
       lastSavedRef.current = saved;
       setLastSaved(saved);
-      retrySceneRef.current = null;
+      retryWorkbenchRef.current = null;
       setSaveError(null);
-      if (sceneRef.current === target) {
-        sceneRef.current = saved;
-        setScene(saved);
+      if (workbenchRef.current === target) {
+        workbenchRef.current = saved;
+        setWorkbench(saved);
       }
       return true;
     } catch (error) {
       if (seq !== seqRef.current) return false;
       setSaveError(readableError(error));
-      retrySceneRef.current = target;
-      sceneRef.current = lastSavedRef.current;
-      setScene(lastSavedRef.current);
+      retryWorkbenchRef.current = target;
+      workbenchRef.current = lastSavedRef.current;
+      setWorkbench(lastSavedRef.current);
       return false;
     } finally {
       if (seq === seqRef.current) setSaving(false);
     }
   }, [clearTimer, client]);
   React10.useEffect(() => {
-    if (scene === lastSaved) return;
+    if (workbench === lastSaved) return;
     clearTimer();
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       void flush();
     }, AUTOSAVE_DELAY_MS);
     return clearTimer;
-  }, [scene, lastSaved, clearTimer, flush]);
+  }, [workbench, lastSaved, clearTimer, flush]);
   React10.useEffect(
     () => () => {
       clearTimer();
       if (deletingRef.current) return;
-      const pending = sceneRef.current;
+      const pending = workbenchRef.current;
       if (pending !== lastSavedRef.current) {
         void client.save(pending).catch(() => void 0);
       }
     },
     [clearTimer, client]
   );
-  const propSceneRef = React10.useRef(props.scene);
+  const propWorkbenchRef = React10.useRef(props.workbench);
   React10.useEffect(() => {
-    const next = props.scene;
-    if (next === propSceneRef.current) return;
-    propSceneRef.current = next;
-    sceneRef.current = next;
+    const next = props.workbench;
+    if (next === propWorkbenchRef.current) return;
+    propWorkbenchRef.current = next;
+    workbenchRef.current = next;
     lastSavedRef.current = next;
-    retrySceneRef.current = null;
-    setScene(next);
+    retryWorkbenchRef.current = null;
+    setWorkbench(next);
     setLastSaved(next);
     setSaveError(null);
-  }, [props.scene]);
+  }, [props.workbench]);
   React10.useEffect(() => {
-    if (selectedPanelId !== null && scene.panels.some((panel) => panel.id === selectedPanelId)) {
+    if (selectedPanelId !== null && workbench.panels.some((panel) => panel.id === selectedPanelId)) {
       return;
     }
-    setSelectedPanelId(scene.panels[0]?.id ?? null);
-  }, [scene.panels, selectedPanelId]);
+    setSelectedPanelId(workbench.panels[0]?.id ?? null);
+  }, [workbench.panels, selectedPanelId]);
   const handleBack = () => {
     void flush().then((saved) => {
       if (saved) props.onBack();
@@ -2073,7 +2073,7 @@ function SceneEditor(props) {
     });
   };
   const switchTo = (id) => {
-    if (id === sceneRef.current.id) return;
+    if (id === workbenchRef.current.id) return;
     setActionError(null);
     void flush().then((saved) => {
       if (saved) props.onSwitch(id);
@@ -2085,16 +2085,16 @@ function SceneEditor(props) {
   };
   const deleteWorkbench = async () => {
     if (deletingRef.current) return;
-    const id = sceneRef.current.id;
+    const id = workbenchRef.current.id;
     setDeleting(true);
     setActionError(null);
     setSaveError(null);
-    retrySceneRef.current = null;
+    retryWorkbenchRef.current = null;
     deletingRef.current = true;
     clearTimer();
     try {
       await client.delete(id);
-      sceneRef.current = lastSavedRef.current;
+      workbenchRef.current = lastSavedRef.current;
       setConfirmingDelete(false);
       await props.onDeleted(id);
     } catch (error) {
@@ -2105,46 +2105,46 @@ function SceneEditor(props) {
     }
   };
   const retrySave = () => {
-    const target = retrySceneRef.current;
+    const target = retryWorkbenchRef.current;
     if (target === null) return;
     setSaveError(null);
-    setScene(target);
+    setWorkbench(target);
   };
   const onWorkbenchChange = (patch) => {
-    setScene((current) => updateWorkbench(current, patch));
+    setWorkbench((current) => updateWorkbench(current, patch));
   };
   const onAddPanel = (type) => {
     const title = type === "harness" ? tr("panel.new.harness", "会话门牌") : tr("panel.new.reserved", "占位面板");
-    const next = addPanel(sceneRef.current, type, title);
+    const next = addPanel(workbenchRef.current, type, title);
     const added = next.panels[next.panels.length - 1];
     if (added !== void 0) setSelectedPanelId(added.id);
-    setScene(next);
+    setWorkbench(next);
   };
   const onDeletePanel = (id) => {
-    setScene((current) => removePanel(current, id));
+    setWorkbench((current) => removePanel(current, id));
   };
   const onMovePanel = (id, delta) => {
-    setScene((current) => movePanel(current, id, delta));
+    setWorkbench((current) => movePanel(current, id, delta));
   };
   const onPanelChange = (id, patch) => {
-    setScene((current) => updatePanel(current, id, patch));
+    setWorkbench((current) => updatePanel(current, id, patch));
   };
   const onPanelTypeChange = (id, type) => {
-    setScene((current) => changePanelType(current, id, type));
+    setWorkbench((current) => changePanelType(current, id, type));
   };
-  const cols = scene.cols ?? DEFAULT_COLS;
-  const status = scene === lastSaved ? tr("save.saved", "已保存") : saving ? tr("save.saving", "保存中…") : tr("save.pending", "待保存");
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  const status = workbench === lastSaved ? tr("save.saved", "已保存") : saving ? tr("save.saving", "保存中…") : tr("save.pending", "待保存");
   return React10.createElement(
     "div",
-    { className: "dshwb-scene" },
-    React10.createElement("style", { dangerouslySetInnerHTML: { __html: SCENE_CSS } }),
+    { className: "dshwb-workbench" },
+    React10.createElement("style", { dangerouslySetInnerHTML: { __html: WORKBENCH_EDITOR_CSS } }),
     React10.createElement(
       "div",
-      { className: "dshwb-scene-bar" },
+      { className: "dshwb-workbench-bar" },
       React10.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: handleBack },
-        `← ${tr("scene.back", "返回列表")}`
+        `← ${tr("workbench.back", "返回列表")}`
       ),
       React10.createElement(
         "select",
@@ -2152,7 +2152,7 @@ function SceneEditor(props) {
           className: "dshwb-switch",
           "aria-label": tr("bar.switch", "切换工作台"),
           title: tr("bar.switch", "切换工作台"),
-          value: scene.id,
+          value: workbench.id,
           disabled: deleting,
           onChange: (event) => switchTo(event.target.value)
         },
@@ -2166,18 +2166,18 @@ function SceneEditor(props) {
       ),
       React10.createElement(
         "div",
-        { className: "dshwb-scene-heading" },
+        { className: "dshwb-workbench-heading" },
         React10.createElement(
           "h2",
-          { className: "dshwb-scene-name", title: scene.name },
-          scene.name.trim() === "" ? scene.id : scene.name
+          { className: "dshwb-workbench-name", title: workbench.name },
+          workbench.name.trim() === "" ? workbench.id : workbench.name
         ),
-        React10.createElement("span", { className: "dshwb-scene-id", title: scene.id }, scene.id)
+        React10.createElement("span", { className: "dshwb-workbench-id", title: workbench.id }, workbench.id)
       ),
       React10.createElement(
         "span",
-        { className: "dshwb-scene-meta" },
-        `${cols} ${tr("scene.colsUnit", "列")} · ${scene.panels.length} ${tr("scene.panelsUnit", "个子面板")}`
+        { className: "dshwb-workbench-meta" },
+        `${cols} ${tr("workbench.colsUnit", "列")} · ${workbench.panels.length} ${tr("workbench.panelsUnit", "个子面板")}`
       ),
       saveError !== null && React10.createElement(
         "span",
@@ -2198,7 +2198,7 @@ function SceneEditor(props) {
       React10.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: handleReload },
-        tr("scene.refresh", "刷新")
+        tr("workbench.refresh", "刷新")
       ),
       confirmingDelete ? React10.createElement(
         React10.Fragment,
@@ -2255,13 +2255,13 @@ function SceneEditor(props) {
         drawerOpen ? tr("drawer.hide", "收起配置") : tr("drawer.show", "配置")
       )
     ),
-    scene.description !== void 0 && scene.description.trim() !== "" && React10.createElement("p", { className: "dshwb-scene-desc" }, scene.description),
+    workbench.description !== void 0 && workbench.description.trim() !== "" && React10.createElement("p", { className: "dshwb-workbench-desc" }, workbench.description),
     React10.createElement(
       "div",
-      { className: "dshwb-scene-body" },
-      React10.createElement(WorkbenchGrid, { scene, tr, shell: props.shell }),
+      { className: "dshwb-workbench-body" },
+      React10.createElement(WorkbenchGrid, { workbench, tr, shell: props.shell }),
       drawerOpen && React10.createElement(ConfigDrawer, {
-        scene,
+        workbench,
         selectedPanelId,
         tr,
         shell: props.shell,
@@ -2358,14 +2358,14 @@ var PANEL_CSS = `
 .dshwb-item:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
 .dshwb-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-item-chevron{flex:0 0 auto;color:rgba(226,234,248,.45);font-size:15px;line-height:1}
-.dshwb-content-scene{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
-.dshwb-scene{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
-.dshwb-scene-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.dshwb-scene-heading{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}
-.dshwb-scene-name{margin:0;overflow:hidden;color:#eef3fb;font-size:15px;font-weight:600;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-scene-id{overflow:hidden;max-width:40%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-scene-meta{flex:0 0 auto;color:rgba(226,234,248,.55);font-size:11.5px;white-space:nowrap}
-.dshwb-scene-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
+.dshwb-content-workbench{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.dshwb-workbench-heading{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}
+.dshwb-workbench-name{margin:0;overflow:hidden;color:#eef3fb;font-size:15px;font-weight:600;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-id{overflow:hidden;max-width:40%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-meta{flex:0 0 auto;color:rgba(226,234,248,.55);font-size:11.5px;white-space:nowrap}
+.dshwb-workbench-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
 .dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
@@ -2422,18 +2422,18 @@ function HelloPanel(props) {
     [state]
   );
   const openCreate = () => setCreating(true);
-  const createWorkbench = async (name2, id) => {
+  const createAndOpenWorkbench = async (name2, id) => {
     if (rpc === void 0) {
       throw new WorkbenchRpcError("internal", tr("error.connection", "连接服务不可用，请稍后重试"));
     }
-    const scene = createWorkbenchScene(id, name2, tr("panel.new.reserved", "占位面板"));
-    const saved = (await rpc.save(scene)).scene;
+    const workbench = createWorkbench(id, name2, tr("panel.new.reserved", "占位面板"));
+    const saved = (await rpc.save(workbench)).workbench;
     const list = await rpc.list();
     setState({ phase: "ready", root: list.root, entries: list.entries });
     setCreating(false);
     writeLastWorkbench(storage, saved.id);
     setDrawerOpen(true);
-    setView({ kind: "scene", scene: saved, configure: true });
+    setView({ kind: "workbench", workbench: saved, configure: true });
   };
   const load = React11.useCallback(async () => {
     if (rpc === void 0) {
@@ -2461,8 +2461,8 @@ function HelloPanel(props) {
     if (rpc === void 0) return;
     setView({ kind: "opening", id });
     try {
-      const { scene } = await rpc.read(id);
-      setView({ kind: "scene", scene });
+      const { workbench } = await rpc.read(id);
+      setView({ kind: "workbench", workbench });
       writeLastWorkbench(storage, id);
       setState(
         (current) => current.phase === "ready" ? {
@@ -2489,12 +2489,12 @@ function HelloPanel(props) {
       const list = await rpc.list();
       setState({ phase: "ready", root: list.root, entries: list.entries });
       const current = viewRef.current;
-      if (current.kind !== "scene") return;
+      if (current.kind !== "workbench") return;
       try {
-        const { scene } = await rpc.read(current.scene.id);
-        setView({ kind: "scene", scene });
+        const { workbench } = await rpc.read(current.workbench.id);
+        setView({ kind: "workbench", workbench });
       } catch (error) {
-        setView({ kind: "open-error", id: current.scene.id, message: readableError2(error) });
+        setView({ kind: "open-error", id: current.workbench.id, message: readableError2(error) });
       }
     } catch (error) {
       setState({ phase: "error", message: readableError2(error) });
@@ -2747,7 +2747,7 @@ function HelloPanel(props) {
       )
     )
   );
-  const renderSceneEditor = (scene) => {
+  const renderWorkbenchEditor = (workbench) => {
     const client = rpc;
     if (client === void 0) {
       return React11.createElement(
@@ -2765,14 +2765,14 @@ function HelloPanel(props) {
         )
       );
     }
-    return React11.createElement(SceneEditor, {
-      key: scene.id,
-      scene,
+    return React11.createElement(WorkbenchEditor, {
+      key: workbench.id,
+      workbench,
       tr,
       client,
       shell: props.shell,
       entries: state.phase === "ready" ? state.entries : [],
-      defaultDrawerOpen: view.kind === "scene" && view.configure === true ? true : drawerOpen,
+      defaultDrawerOpen: view.kind === "workbench" && view.configure === true ? true : drawerOpen,
       onBack: () => void load(),
       onReload: () => void refresh(),
       onSwitch: (id) => void openWorkbench(id),
@@ -2784,7 +2784,7 @@ function HelloPanel(props) {
   const renderOpenError = (id, message) => React11.createElement(
     "div",
     { className: "dshwb-card" },
-    React11.createElement("h2", { className: "dshwb-card-title" }, tr("scene.error.title", "打开工作台失败")),
+    React11.createElement("h2", { className: "dshwb-card-title" }, tr("workbench.error.title", "打开工作台失败")),
     React11.createElement("p", { className: "dshwb-card-sub" }, message),
     React11.createElement(
       "div",
@@ -2792,7 +2792,7 @@ function HelloPanel(props) {
       React11.createElement(
         "button",
         { type: "button", className: "dshwb-secondary", onClick: () => setView({ kind: "list" }) },
-        tr("scene.back", "返回列表")
+        tr("workbench.back", "返回列表")
       ),
       React11.createElement(
         "button",
@@ -2802,7 +2802,7 @@ function HelloPanel(props) {
     )
   );
   let body;
-  let sceneView = false;
+  let workbenchView = false;
   if (state.phase === "loading") {
     body = React11.createElement("p", { className: "dshwb-loading" }, tr("list.loading", "正在读取…"));
   } else if (state.phase === "no-root") {
@@ -2810,11 +2810,11 @@ function HelloPanel(props) {
   } else if (state.phase === "ready") {
     if (editingRoot) {
       body = renderRootForm();
-    } else if (view.kind === "scene") {
-      sceneView = true;
-      body = renderSceneEditor(view.scene);
+    } else if (view.kind === "workbench") {
+      workbenchView = true;
+      body = renderWorkbenchEditor(view.workbench);
     } else if (view.kind === "opening") {
-      body = React11.createElement("p", { className: "dshwb-loading" }, tr("scene.opening", "正在打开…"));
+      body = React11.createElement("p", { className: "dshwb-loading" }, tr("workbench.opening", "正在打开…"));
     } else if (view.kind === "open-error") {
       body = renderOpenError(view.id, view.message);
     } else {
@@ -2862,14 +2862,14 @@ function HelloPanel(props) {
     React11.createElement(HeroBackdrop),
     React11.createElement(
       "div",
-      { className: sceneView ? "dshwb-content dshwb-content-scene" : "dshwb-content" },
-      sceneView ? body : React11.createElement("div", { className: "dshwb-stack" }, body)
+      { className: workbenchView ? "dshwb-content dshwb-content-workbench" : "dshwb-content" },
+      workbenchView ? body : React11.createElement("div", { className: "dshwb-stack" }, body)
     ),
     creating && React11.createElement(CreateWorkbenchDialog, {
       translate: tr,
       takenIds,
       onClose: () => setCreating(false),
-      onCreate: createWorkbench
+      onCreate: createAndOpenWorkbench
     })
   );
 }
@@ -3116,12 +3116,12 @@ var zh = {
   "list.status.missing.hint": "索引里有登记，但工作台目录或 JSON 已不在；不会自动删除登记。",
   "list.status.corrupt": "损坏",
   "list.status.corrupt.hint": "工作台 JSON 无法解析；修好文件后点「刷新」即可恢复。",
-  "scene.back": "返回列表",
-  "scene.refresh": "刷新",
-  "scene.opening": "正在打开…",
-  "scene.colsUnit": "列",
-  "scene.panelsUnit": "个子面板",
-  "scene.error.title": "打开工作台失败",
+  "workbench.back": "返回列表",
+  "workbench.refresh": "刷新",
+  "workbench.opening": "正在打开…",
+  "workbench.colsUnit": "列",
+  "workbench.panelsUnit": "个子面板",
+  "workbench.error.title": "打开工作台失败",
   "save.saving": "保存中…",
   "save.saved": "已保存",
   "save.pending": "待保存",
@@ -3249,12 +3249,12 @@ var en = {
   "list.status.missing.hint": "Still in the index, but its folder or JSON is gone; the entry is never deleted automatically.",
   "list.status.corrupt": "Corrupt",
   "list.status.corrupt.hint": "The workbench JSON cannot be parsed; fix the file and hit Refresh.",
-  "scene.back": "Back to list",
-  "scene.refresh": "Refresh",
-  "scene.opening": "Opening…",
-  "scene.colsUnit": "columns",
-  "scene.panelsUnit": "panels",
-  "scene.error.title": "Could not open the workbench",
+  "workbench.back": "Back to list",
+  "workbench.refresh": "Refresh",
+  "workbench.opening": "Opening…",
+  "workbench.colsUnit": "columns",
+  "workbench.panelsUnit": "panels",
+  "workbench.error.title": "Could not open the workbench",
   "save.saving": "Saving…",
   "save.saved": "Saved",
   "save.pending": "Unsaved",

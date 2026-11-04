@@ -1,14 +1,14 @@
 /**
- * The scene view: one workbench being edited.
+ * The workbench view: one workbench being edited.
  *
- * It owns the live scene (local first, grid reflows on every keystroke), the
+ * It owns the live workbench (local first, grid reflows on every keystroke), the
  * autosave (300ms debounce over the Host `save` RPC) and the drawer/grid split.
- * A failed save keeps its readable error in the top bar, rolls the visible scene
+ * A failed save keeps its readable error in the top bar, rolls the visible workbench
  * back to the last version known to be on disk, and offers a retry that
  * re-applies the failed draft.
  *
  * Ticket #6 adds the top-bar workbench switcher, the refresh action (flush,
- * then let the shell re-read the root/list/scene), and the confirmed delete
+ * then let the shell re-read the root/list/workbench), and the confirmed delete
  * that removes the folder and its index entry before handing the panel back.
  */
 import * as React from 'react';
@@ -27,18 +27,18 @@ import {
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
 import type { SessionShell } from './session-shell';
 import { workbenchOptionLabel } from './workbench-status';
-import { DEFAULT_COLS, type WorkbenchPanel, type WorkbenchScene } from '../shared/workbench/schema';
+import { DEFAULT_COLS, type WorkbenchPanel, type Workbench } from '../shared/workbench/schema';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
 import type { Translate } from './translate';
 
 /** Debounce window for autosave, as the spec asks (~300ms). */
 export const AUTOSAVE_DELAY_MS = 300;
 
-/** Styles for the scene body and its save indicator. */
-export const SCENE_CSS = `
-.dshwb-scene{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
-.dshwb-scene-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
-.dshwb-scene-body>.dshwb-grid-wrap{flex:1;min-width:0}
+/** Styles for the workbench body and its save indicator. */
+export const WORKBENCH_EDITOR_CSS = `
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
+.dshwb-workbench-body>.dshwb-grid-wrap{flex:1;min-width:0}
 .dshwb-save-status{flex:0 0 auto;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap}
 .dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:#ffb4a8;font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
@@ -49,9 +49,9 @@ export const SCENE_CSS = `
 // declared after the drawer's base width rules and actually wins.
 
 /** Props injected by the panel shell. */
-export interface SceneEditorProps {
-  /** Initial scene read from disk; the editor takes it over from here. */
-  scene: WorkbenchScene;
+export interface WorkbenchEditorProps {
+  /** Initial workbench read from disk; the editor takes it over from here. */
+  workbench: Workbench;
   tr: Translate;
   client: WorkbenchClient;
   /** The shell session list, handed to the badge renderer and the drawer. */
@@ -79,10 +79,10 @@ function readableError(error: unknown): string {
 }
 
 /** The editor for one workbench. */
-export function SceneEditor(props: SceneEditorProps): React.ReactElement {
+export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement {
   const { tr, client } = props;
-  const [scene, setScene] = React.useState<WorkbenchScene>(props.scene);
-  const [lastSaved, setLastSaved] = React.useState<WorkbenchScene>(props.scene);
+  const [workbench, setWorkbench] = React.useState<Workbench>(props.workbench);
+  const [lastSaved, setLastSaved] = React.useState<Workbench>(props.workbench);
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [drawerOpen, setDrawerOpen] = React.useState(props.defaultDrawerOpen === true);
@@ -90,15 +90,15 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
   const [deleting, setDeleting] = React.useState(false);
   const [actionError, setActionError] = React.useState<string | null>(null);
   const [selectedPanelId, setSelectedPanelId] = React.useState<string | null>(
-    props.scene.panels[0]?.id ?? null,
+    props.workbench.panels[0]?.id ?? null,
   );
 
-  const sceneRef = React.useRef(scene);
-  sceneRef.current = scene;
+  const workbenchRef = React.useRef(workbench);
+  workbenchRef.current = workbench;
   const lastSavedRef = React.useRef(lastSaved);
   lastSavedRef.current = lastSaved;
   /** The draft whose save failed, kept so "retry" can re-apply it. */
-  const retrySceneRef = React.useRef<WorkbenchScene | null>(null);
+  const retryWorkbenchRef = React.useRef<Workbench | null>(null);
   const timerRef = React.useRef<number | null>(null);
   /** Monotonic save counter so an out-of-order reply never overwrites newer state. */
   const seqRef = React.useRef(0);
@@ -113,38 +113,38 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
   }, []);
 
   /**
-   * Save the live scene now (cancelling the debounce). Returns false when the
+   * Save the live workbench now (cancelling the debounce). Returns false when the
    * save failed, so navigation can stay on the panel and show the error.
    */
   const flush = React.useCallback(async (): Promise<boolean> => {
     clearTimer();
-    const target = sceneRef.current;
+    const target = workbenchRef.current;
     if (target === lastSavedRef.current) return true;
     const seq = seqRef.current + 1;
     seqRef.current = seq;
     setSaving(true);
     try {
-      const saved = (await client.save(target)).scene;
+      const saved = (await client.save(target)).workbench;
       if (seq !== seqRef.current) return true;
       lastSavedRef.current = saved;
       setLastSaved(saved);
-      retrySceneRef.current = null;
+      retryWorkbenchRef.current = null;
       setSaveError(null);
-      if (sceneRef.current === target) {
+      if (workbenchRef.current === target) {
         // Treat the saved copy as current immediately, so the unmount safety
-        // net below does not write the same scene a second time.
-        sceneRef.current = saved;
-        setScene(saved);
+        // net below does not write the same workbench a second time.
+        workbenchRef.current = saved;
+        setWorkbench(saved);
       }
       return true;
     } catch (error) {
       if (seq !== seqRef.current) return false;
       setSaveError(readableError(error));
-      retrySceneRef.current = target;
+      retryWorkbenchRef.current = target;
       // Fall back to the last version we know is on disk, and make the ref agree
       // so an unmount right now cannot resurrect the failed draft.
-      sceneRef.current = lastSavedRef.current;
-      setScene(lastSavedRef.current);
+      workbenchRef.current = lastSavedRef.current;
+      setWorkbench(lastSavedRef.current);
       return false;
     } finally {
       if (seq === seqRef.current) setSaving(false);
@@ -153,14 +153,14 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
 
   // Debounce: every change schedules one save 300ms after the last edit.
   React.useEffect(() => {
-    if (scene === lastSaved) return;
+    if (workbench === lastSaved) return;
     clearTimer();
     timerRef.current = window.setTimeout(() => {
       timerRef.current = null;
       void flush();
     }, AUTOSAVE_DELAY_MS);
     return clearTimer;
-  }, [scene, lastSaved, clearTimer, flush]);
+  }, [workbench, lastSaved, clearTimer, flush]);
 
   // Safety net: an edit made right before the editor unmounts still reaches disk.
   React.useEffect(
@@ -168,7 +168,7 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
       clearTimer();
       // A delete in flight wins: saving now would resurrect the removed folder.
       if (deletingRef.current) return;
-      const pending = sceneRef.current;
+      const pending = workbenchRef.current;
       if (pending !== lastSavedRef.current) {
         void client.save(pending).catch(() => undefined);
       }
@@ -180,30 +180,30 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
    * Adopt a disk re-read of the same workbench (the refresh action).
    *
    * The shell keys this component by workbench id, so a refresh of the open
-   * workbench keeps the component mounted and hands down a fresh `scene` prop.
+   * workbench keeps the component mounted and hands down a fresh `workbench` prop.
    * Without this sync the editor would keep showing its own copy and AI edits
    * made on disk would never appear.
    */
-  const propSceneRef = React.useRef(props.scene);
+  const propWorkbenchRef = React.useRef(props.workbench);
   React.useEffect(() => {
-    const next = props.scene;
-    if (next === propSceneRef.current) return;
-    propSceneRef.current = next;
-    sceneRef.current = next;
+    const next = props.workbench;
+    if (next === propWorkbenchRef.current) return;
+    propWorkbenchRef.current = next;
+    workbenchRef.current = next;
     lastSavedRef.current = next;
-    retrySceneRef.current = null;
-    setScene(next);
+    retryWorkbenchRef.current = null;
+    setWorkbench(next);
     setLastSaved(next);
     setSaveError(null);
-  }, [props.scene]);
+  }, [props.workbench]);
 
   // Keep the selection valid when the selected panel is removed.
   React.useEffect(() => {
-    if (selectedPanelId !== null && scene.panels.some((panel) => panel.id === selectedPanelId)) {
+    if (selectedPanelId !== null && workbench.panels.some((panel) => panel.id === selectedPanelId)) {
       return;
     }
-    setSelectedPanelId(scene.panels[0]?.id ?? null);
-  }, [scene.panels, selectedPanelId]);
+    setSelectedPanelId(workbench.panels[0]?.id ?? null);
+  }, [workbench.panels, selectedPanelId]);
 
   const handleBack = (): void => {
     void flush().then((saved) => {
@@ -224,7 +224,7 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
 
   /** Switch workbenches only after the pending autosave lands. */
   const switchTo = (id: string): void => {
-    if (id === sceneRef.current.id) return;
+    if (id === workbenchRef.current.id) return;
     setActionError(null);
     void flush().then((saved) => {
       if (saved) props.onSwitch(id);
@@ -239,17 +239,17 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
   /** Delete the open workbench, then let the shell pick the next one. */
   const deleteWorkbench = async (): Promise<void> => {
     if (deletingRef.current) return;
-    const id = sceneRef.current.id;
+    const id = workbenchRef.current.id;
     setDeleting(true);
     setActionError(null);
     setSaveError(null);
-    retrySceneRef.current = null;
+    retryWorkbenchRef.current = null;
     deletingRef.current = true;
     clearTimer();
     try {
       await client.delete(id);
-      // The unmount right after this must not write the removed scene back.
-      sceneRef.current = lastSavedRef.current;
+      // The unmount right after this must not write the removed workbench back.
+      workbenchRef.current = lastSavedRef.current;
       setConfirmingDelete(false);
       await props.onDeleted(id);
     } catch (error) {
@@ -261,15 +261,15 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
   };
 
   const retrySave = (): void => {
-    const target = retrySceneRef.current;
+    const target = retryWorkbenchRef.current;
     if (target === null) return;
     setSaveError(null);
     // The debounce effect picks this change up and saves it again.
-    setScene(target);
+    setWorkbench(target);
   };
 
   const onWorkbenchChange = (patch: WorkbenchFieldsPatch): void => {
-    setScene((current) => updateWorkbench(current, patch));
+    setWorkbench((current) => updateWorkbench(current, patch));
   };
 
   const onAddPanel = (type: PanelType): void => {
@@ -277,31 +277,31 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
       type === 'harness'
         ? tr('panel.new.harness', '会话门牌')
         : tr('panel.new.reserved', '占位面板');
-    const next = addPanel(sceneRef.current, type, title);
+    const next = addPanel(workbenchRef.current, type, title);
     const added = next.panels[next.panels.length - 1];
     if (added !== undefined) setSelectedPanelId(added.id);
-    setScene(next);
+    setWorkbench(next);
   };
 
   const onDeletePanel = (id: string): void => {
-    setScene((current) => removePanel(current, id));
+    setWorkbench((current) => removePanel(current, id));
   };
 
   const onMovePanel = (id: string, delta: number): void => {
-    setScene((current) => movePanel(current, id, delta));
+    setWorkbench((current) => movePanel(current, id, delta));
   };
 
   const onPanelChange = (id: string, patch: Partial<WorkbenchPanel>): void => {
-    setScene((current) => updatePanel(current, id, patch));
+    setWorkbench((current) => updatePanel(current, id, patch));
   };
 
   const onPanelTypeChange = (id: string, type: PanelType): void => {
-    setScene((current) => changePanelType(current, id, type));
+    setWorkbench((current) => changePanelType(current, id, type));
   };
 
-  const cols = scene.cols ?? DEFAULT_COLS;
+  const cols = workbench.cols ?? DEFAULT_COLS;
   const status =
-    scene === lastSaved
+    workbench === lastSaved
       ? tr('save.saved', '已保存')
       : saving
         ? tr('save.saving', '保存中…')
@@ -309,15 +309,15 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
 
   return React.createElement(
     'div',
-    { className: 'dshwb-scene' },
-    React.createElement('style', { dangerouslySetInnerHTML: { __html: SCENE_CSS } }),
+    { className: 'dshwb-workbench' },
+    React.createElement('style', { dangerouslySetInnerHTML: { __html: WORKBENCH_EDITOR_CSS } }),
     React.createElement(
       'div',
-      { className: 'dshwb-scene-bar' },
+      { className: 'dshwb-workbench-bar' },
       React.createElement(
         'button',
         { type: 'button', className: 'dshwb-link', onClick: handleBack },
-        `← ${tr('scene.back', '返回列表')}`,
+        `← ${tr('workbench.back', '返回列表')}`,
       ),
       React.createElement(
         'select',
@@ -325,7 +325,7 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
           className: 'dshwb-switch',
           'aria-label': tr('bar.switch', '切换工作台'),
           title: tr('bar.switch', '切换工作台'),
-          value: scene.id,
+          value: workbench.id,
           disabled: deleting,
           onChange: (event: React.ChangeEvent<HTMLSelectElement>) => switchTo(event.target.value),
         },
@@ -339,18 +339,18 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
       ),
       React.createElement(
         'div',
-        { className: 'dshwb-scene-heading' },
+        { className: 'dshwb-workbench-heading' },
         React.createElement(
           'h2',
-          { className: 'dshwb-scene-name', title: scene.name },
-          scene.name.trim() === '' ? scene.id : scene.name,
+          { className: 'dshwb-workbench-name', title: workbench.name },
+          workbench.name.trim() === '' ? workbench.id : workbench.name,
         ),
-        React.createElement('span', { className: 'dshwb-scene-id', title: scene.id }, scene.id),
+        React.createElement('span', { className: 'dshwb-workbench-id', title: workbench.id }, workbench.id),
       ),
       React.createElement(
         'span',
-        { className: 'dshwb-scene-meta' },
-        `${cols} ${tr('scene.colsUnit', '列')} · ${scene.panels.length} ${tr('scene.panelsUnit', '个子面板')}`,
+        { className: 'dshwb-workbench-meta' },
+        `${cols} ${tr('workbench.colsUnit', '列')} · ${workbench.panels.length} ${tr('workbench.panelsUnit', '个子面板')}`,
       ),
       saveError !== null &&
         React.createElement(
@@ -375,7 +375,7 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
       React.createElement(
         'button',
         { type: 'button', className: 'dshwb-link', onClick: handleReload },
-        tr('scene.refresh', '刷新'),
+        tr('workbench.refresh', '刷新'),
       ),
       confirmingDelete
         ? React.createElement(
@@ -436,16 +436,16 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
         drawerOpen ? tr('drawer.hide', '收起配置') : tr('drawer.show', '配置'),
       ),
     ),
-    scene.description !== undefined &&
-      scene.description.trim() !== '' &&
-      React.createElement('p', { className: 'dshwb-scene-desc' }, scene.description),
+    workbench.description !== undefined &&
+      workbench.description.trim() !== '' &&
+      React.createElement('p', { className: 'dshwb-workbench-desc' }, workbench.description),
     React.createElement(
       'div',
-      { className: 'dshwb-scene-body' },
-      React.createElement(WorkbenchGrid, { scene, tr, shell: props.shell }),
+      { className: 'dshwb-workbench-body' },
+      React.createElement(WorkbenchGrid, { workbench, tr, shell: props.shell }),
       drawerOpen &&
         React.createElement(ConfigDrawer, {
-          scene,
+          workbench,
           selectedPanelId,
           tr,
           shell: props.shell,

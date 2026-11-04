@@ -30,7 +30,7 @@ export function panelIndexLabel(index: number): string {
 }
 
 /**
- * The grid track template for a scene: `cols` equal, non-overflowing columns.
+ * The grid track template for a workbench: `cols` equal, non-overflowing columns.
  * `minmax(0, 1fr)` keeps a wide panel body from stretching its column.
  */
 export function gridTemplateColumns(cols?: number): string {

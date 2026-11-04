@@ -15,7 +15,7 @@ export interface HarnessBinding {
   sessionTitle: string;
   /** The session identity. Resolving sessions always goes through this id. */
   sessionId: string;
-  /** Pin targets from the scene config, normalised to a string array. */
+  /** Pin targets from the workbench config, normalised to a string array. */
   pinTarget: string[];
 }
 
@@ -31,7 +31,7 @@ const LIST_SEPARATOR = /[,，]/;
 /**
  * Coerce a raw `pinTarget` JSON value into the string array the config expects.
  *
- * Public scene configs arrive as arrays, but an AI may have written a single
+ * Public workbench configs arrive as arrays, but an AI may have written a single
  * string; anything else (number, object, null) has no list meaning and becomes
  * an empty array rather than being carried along in a broken shape.
  */

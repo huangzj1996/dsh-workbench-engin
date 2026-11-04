@@ -18,7 +18,7 @@ import {
 import {
   DEFAULT_COLS,
   type WorkbenchPanel,
-  type WorkbenchScene,
+  type Workbench,
 } from '../shared/workbench/schema';
 import { panelRenderer } from './renderers';
 import { UnknownPanel } from './renderers/unknown';
@@ -48,7 +48,7 @@ export const GRID_CSS = `
 
 export interface WorkbenchGridProps {
   /** The workbench to draw; `cols` and panel coordinates come straight from it. */
-  scene: WorkbenchScene;
+  workbench: Workbench;
   /** Translate helper bound to the workbench namespace. */
   tr: Translate;
   /** The shell session list, for renderers that bind to a session. */
@@ -57,13 +57,13 @@ export interface WorkbenchGridProps {
 
 /** The grid for one workbench, or an empty hint when it has no panels. */
 export function WorkbenchGrid(props: WorkbenchGridProps): React.ReactElement {
-  const { scene, tr, shell } = props;
-  const cols = scene.cols ?? DEFAULT_COLS;
+  const { workbench, tr, shell } = props;
+  const cols = workbench.cols ?? DEFAULT_COLS;
   return React.createElement(
     'div',
     { className: 'dshwb-grid-wrap' },
     React.createElement('style', { dangerouslySetInnerHTML: { __html: GRID_CSS } }),
-    scene.panels.length === 0
+    workbench.panels.length === 0
       ? React.createElement(
           'p',
           { className: 'dshwb-grid-empty' },
@@ -78,7 +78,7 @@ export function WorkbenchGrid(props: WorkbenchGridProps): React.ReactElement {
             className: 'dshwb-grid',
             style: { gridTemplateColumns: gridTemplateColumns(cols) },
           },
-          scene.panels.map((panel, index) =>
+          workbench.panels.map((panel, index) =>
             React.createElement(PanelFrame, {
               key: panel.id,
               panel,

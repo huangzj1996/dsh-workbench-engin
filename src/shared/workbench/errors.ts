@@ -10,7 +10,7 @@ export type WorkbenchErrorCode =
   | 'root-unset'
   | 'root-unreachable'
   | 'id-invalid'
-  | 'scene-invalid'
+  | 'workbench-invalid'
   | 'write-failed'
   | 'file-corrupt'
   | 'not-found'
@@ -27,7 +27,7 @@ const BASE_MESSAGE: Record<WorkbenchErrorCode, string> = {
   'root-unset': '尚未设置工作台根目录',
   'root-unreachable': '无法访问工作台根目录',
   'id-invalid': '工作台 id 不合法',
-  'scene-invalid': '工作台配置不合法',
+  'workbench-invalid': '工作台配置不合法',
   'write-failed': '写入失败',
   'file-corrupt': '文件损坏',
   'not-found': '未找到该工作台',

@@ -13,7 +13,7 @@ import type {
   WorkbenchRpcMethod,
   WorkbenchRpcResult,
 } from '../shared/workbench/protocol';
-import type { WorkbenchScene } from '../shared/workbench/schema';
+import type { Workbench } from '../shared/workbench/schema';
 
 /** `/api` carrier channel; the real endpoint name travels in the body. */
 const CARRIER_CHANNEL = '/api';
@@ -56,8 +56,8 @@ export interface WorkbenchClient {
   setRoot(root: string): Promise<{ root: string }>;
   pickRoot(): Promise<PickRootResult>;
   list(): Promise<WorkbenchList>;
-  read(id: string): Promise<{ scene: WorkbenchScene }>;
-  save(scene: WorkbenchScene): Promise<{ scene: WorkbenchScene }>;
+  read(id: string): Promise<{ workbench: Workbench }>;
+  save(workbench: Workbench): Promise<{ workbench: Workbench }>;
   delete(id: string): Promise<{ id: string }>;
 }
 
@@ -116,8 +116,8 @@ export function createWorkbenchClient(ctx: ClientRpcContext): WorkbenchClient {
     setRoot: (root) => call<{ root: string }>('setRoot', { root }),
     pickRoot: () => call<PickRootResult>('pickRoot', {}),
     list: () => call<WorkbenchList>('list', {}),
-    read: (id) => call<{ scene: WorkbenchScene }>('read', { id }),
-    save: (scene) => call<{ scene: WorkbenchScene }>('save', { scene }),
+    read: (id) => call<{ workbench: Workbench }>('read', { id }),
+    save: (workbench) => call<{ workbench: Workbench }>('save', { workbench }),
     delete: (id) => call<{ id: string }>('delete', { id }),
   };
 }

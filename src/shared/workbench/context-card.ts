@@ -1,5 +1,5 @@
 /**
- * The localisation card: `<root>/<id>/<id>-context.md`.
+ * The context card (定位卡): `<root>/<id>/<id>-context.md`.
  *
  * It is written once when a workbench is created and handed to an AI as
  * context; it never takes part in rendering and config saves never rewrite it,
@@ -7,23 +7,23 @@
  * one identity in the card that must stay in sync with the JSON, hence the
  * explicit line for it.
  */
-import type { WorkbenchScene } from './schema';
+import type { Workbench } from './schema';
 
 /** Placeholder purpose used when the workbench has no description yet. */
 export const CONTEXT_CARD_PURPOSE_PLACEHOLDER = '（待补充）';
 
 /** Build the initial `<id>-context.md` body for one workbench. */
 export function contextCardMarkdown(
-  scene: Pick<WorkbenchScene, 'id' | 'name' | 'description'>,
+  workbench: Pick<Workbench, 'id' | 'name' | 'description'>,
 ): string {
   const purpose =
-    scene.description !== undefined && scene.description.trim() !== ''
-      ? scene.description.trim()
+    workbench.description !== undefined && workbench.description.trim() !== ''
+      ? workbench.description.trim()
       : CONTEXT_CARD_PURPOSE_PLACEHOLDER;
-  const id = scene.id;
+  const id = workbench.id;
 
   return [
-    `# ${scene.name}`,
+    `# ${workbench.name}`,
     '',
     `> 工作台 id：\`${id}\``,
     '',

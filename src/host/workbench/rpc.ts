@@ -80,7 +80,7 @@ export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
         case 'read':
           return { ok: true, value: await store.read(await resolveRoot(), field(call.payload, 'id')) };
         case 'save':
-          return { ok: true, value: await store.save(await resolveRoot(), field(call.payload, 'scene')) };
+          return { ok: true, value: await store.save(await resolveRoot(), field(call.payload, 'workbench')) };
         case 'delete':
           return { ok: true, value: await store.delete(await resolveRoot(), field(call.payload, 'id')) };
         default:

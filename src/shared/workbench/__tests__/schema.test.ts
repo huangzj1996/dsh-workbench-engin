@@ -14,7 +14,7 @@ function thrown(fn: () => unknown): WorkbenchStoreError {
 }
 
 describe('parseWorkbench', () => {
-  it('parses a valid workbench and keeps unknown fields on the scene and panels', () => {
+  it('parses a valid workbench and keeps unknown fields on the workbench and panels', () => {
     const text = JSON.stringify({
       id: 'alpha',
       name: 'Alpha',
@@ -23,16 +23,16 @@ describe('parseWorkbench', () => {
       panels: [{ id: 'p1', title: 'One', type: 'reserved', futurePanelField: 42 }],
     });
 
-    const scene = parseWorkbench(text);
+    const workbench = parseWorkbench(text);
 
-    expect(scene.id).toBe('alpha');
-    expect(scene.name).toBe('Alpha');
-    expect(scene.cols).toBe(3);
-    expect(scene.panels[0]?.type).toBe('reserved');
-    expect((scene.panels[0] as unknown as Record<string, unknown>)['futurePanelField']).toBe(42);
-    expect((scene as unknown as Record<string, unknown>)['future']).toEqual({ nested: true });
+    expect(workbench.id).toBe('alpha');
+    expect(workbench.name).toBe('Alpha');
+    expect(workbench.cols).toBe(3);
+    expect(workbench.panels[0]?.type).toBe('reserved');
+    expect((workbench.panels[0] as unknown as Record<string, unknown>)['futurePanelField']).toBe(42);
+    expect((workbench as unknown as Record<string, unknown>)['future']).toEqual({ nested: true });
     // Round-trip: serializing then parsing again must not drop the unknown fields.
-    expect(JSON.parse(serializeWorkbench(scene))).toEqual(JSON.parse(text));
+    expect(JSON.parse(serializeWorkbench(workbench))).toEqual(JSON.parse(text));
   });
 
   it('reports unparseable JSON as file-corrupt with a readable Chinese message', () => {
@@ -41,9 +41,9 @@ describe('parseWorkbench', () => {
     expect(error.message).toContain('文件损坏');
   });
 
-  it('reports structurally invalid JSON as scene-invalid', () => {
+  it('reports structurally invalid JSON as workbench-invalid', () => {
     const error = thrown(() => parseWorkbench(JSON.stringify({ name: 'no id', panels: [] })));
-    expect(error.code).toBe('scene-invalid');
+    expect(error.code).toBe('workbench-invalid');
     expect(error.message).toContain('配置不合法');
   });
 });

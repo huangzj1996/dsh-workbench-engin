@@ -20,8 +20,8 @@ import {
   isWorkbenchId,
   parseWorkbench,
   serializeWorkbench,
-  validateScene,
-  type WorkbenchScene,
+  validateWorkbench,
+  type Workbench,
 } from '../../shared/workbench/schema';
 
 /** The Host config directory name inside the DSH home. */
@@ -91,8 +91,8 @@ export interface WorkbenchStore {
   getRootConfig(): Promise<RootConfig>;
   setRoot(payload: unknown): Promise<{ root: string }>;
   list(root: string): Promise<WorkbenchList>;
-  read(root: string, id: unknown): Promise<{ scene: WorkbenchScene }>;
-  save(root: string, scene: unknown): Promise<{ scene: WorkbenchScene }>;
+  read(root: string, id: unknown): Promise<{ workbench: Workbench }>;
+  save(root: string, workbench: unknown): Promise<{ workbench: Workbench }>;
   delete(root: string, id: unknown): Promise<{ id: string }>;
 }
 
@@ -217,7 +217,7 @@ async function scanWorkbenchIds(fs: FsLike, root: string): Promise<string[]> {
 }
 
 /** Read and validate one workbench JSON; `null` means corrupt (for the list flag). */
-async function readSceneOrNull(fs: FsLike, file: string): Promise<WorkbenchScene | null> {
+async function readWorkbenchOrNull(fs: FsLike, file: string): Promise<Workbench | null> {
   try {
     return parseWorkbench(await fs.readFile(file, 'utf8'));
   } catch {
@@ -232,8 +232,8 @@ async function readSceneOrNull(fs: FsLike, file: string): Promise<WorkbenchScene
  * directory) and then belongs to the AI/user: a later config save must never
  * overwrite it, so an existing card — even an empty or hand-edited one — wins.
  */
-async function ensureContextCard(fs: FsLike, root: string, scene: WorkbenchScene): Promise<void> {
-  const file = path.join(root, scene.id, `${scene.id}${CONTEXT_CARD_SUFFIX}`);
+async function ensureContextCard(fs: FsLike, root: string, workbench: Workbench): Promise<void> {
+  const file = path.join(root, workbench.id, `${workbench.id}${CONTEXT_CARD_SUFFIX}`);
   try {
     await fs.stat(file);
     return;
@@ -243,7 +243,7 @@ async function ensureContextCard(fs: FsLike, root: string, scene: WorkbenchScene
     }
   }
   try {
-    await fs.writeFile(file, contextCardMarkdown(scene), 'utf8');
+    await fs.writeFile(file, contextCardMarkdown(workbench), 'utf8');
   } catch (error) {
     throw new WorkbenchStoreError('write-failed', describe(error));
   }
@@ -367,14 +367,14 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
         entries.push({ id: entry.id, name: entry.id, status: 'missing', order: entry.order });
         continue;
       }
-      const scene = await readSceneOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
-      if (scene === null) {
+      const workbench = await readWorkbenchOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
+      if (workbench === null) {
         entries.push({ id: entry.id, name: entry.id, status: 'corrupt', order: entry.order });
         continue;
       }
       entries.push({
         id: entry.id,
-        name: scene.name,
+        name: workbench.name,
         status: adopted.has(entry.id) ? 'adopted' : 'ok',
         order: entry.order,
       });
@@ -382,7 +382,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     return { root, entries };
   }
 
-  async function read(rootInput: string, idInput: unknown): Promise<{ scene: WorkbenchScene }> {
+  async function read(rootInput: string, idInput: unknown): Promise<{ workbench: Workbench }> {
     const id = assertWorkbenchId(idInput);
     const root = path.resolve(rootInput);
     await assertRoot(fs, root);
@@ -397,27 +397,27 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     if (Buffer.byteLength(text, 'utf8') > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError('too-large', `${id}/${id}.json`);
     }
-    let scene: WorkbenchScene;
+    let workbench: Workbench;
     try {
-      scene = parseWorkbench(text);
+      workbench = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
       throw new WorkbenchStoreError('file-corrupt', describe(error));
     }
     // The user has now seen this workbench: it stops being "new on disk".
     adoptedByRoot.get(root)?.delete(id);
-    return { scene };
+    return { workbench };
   }
 
-  async function save(rootInput: string, payload: unknown): Promise<{ scene: WorkbenchScene }> {
+  async function save(rootInput: string, payload: unknown): Promise<{ workbench: Workbench }> {
     const root = path.resolve(rootInput);
     const rawId =
       typeof payload === 'object' && payload !== null
         ? (payload as Record<string, unknown>)['id']
         : undefined;
     const id = assertWorkbenchId(rawId);
-    const scene = validateScene(payload);
-    const text = serializeWorkbench(scene);
+    const workbench = validateWorkbench(payload);
+    const text = serializeWorkbench(workbench);
     if (Buffer.byteLength(text, 'utf8') > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError('too-large', `${id}/${id}.json`);
     }
@@ -427,14 +427,14 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     } catch (error) {
       throw new WorkbenchStoreError('write-failed', describe(error));
     }
-    await ensureContextCard(fs, root, scene);
+    await ensureContextCard(fs, root, workbench);
     const { data: index } = await readIndex(fs, root);
     if (!index.workbenches.some((entry) => entry.id === id)) {
       const nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;
       index.workbenches.push({ id, order: nextOrder });
       await writeIndex(fs, root, index);
     }
-    return { scene };
+    return { workbench };
   }
 
   async function deleteWorkbench(rootInput: string, idInput: unknown): Promise<{ id: string }> {

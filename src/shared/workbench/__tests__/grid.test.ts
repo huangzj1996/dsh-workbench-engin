@@ -41,7 +41,7 @@ describe('panelIndexLabel', () => {
 });
 
 describe('gridTemplateColumns', () => {
-  it('builds one equal, non-overflowing column per scene column', () => {
+  it('builds one equal, non-overflowing column per workbench column', () => {
     expect(gridTemplateColumns(6)).toBe('repeat(6, minmax(0, 1fr))');
   });
 

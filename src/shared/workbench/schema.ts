@@ -1,7 +1,7 @@
 /**
  * Workbench JSON schema: the one shape written to `<root>/<id>/<id>.json`.
  *
- * Parsing never reshapes the document: unknown fields on the scene and on each
+ * Parsing never reshapes the document: unknown fields on the workbench and on each
  * panel are part of the contract (an AI may write future fields), so validation
  * checks the known fields and returns the parsed object untouched.
  */
@@ -28,7 +28,7 @@ export interface WorkbenchPanel {
 }
 
 /** A workbench: `<root>/<id>/<id>.json` is the single source of truth. */
-export interface WorkbenchScene {
+export interface Workbench {
   id: string;
   name: string;
   description?: string;
@@ -58,9 +58,9 @@ function isPositiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 1;
 }
 
-/** Reject one panel field with a scene-invalid error. */
+/** Reject one panel field with a workbench-invalid error. */
 function invalid(reason: string): never {
-  throw new WorkbenchStoreError('scene-invalid', reason);
+  throw new WorkbenchStoreError('workbench-invalid', reason);
 }
 
 /** Validate one panel, leaving it untouched so unknown fields survive. */
@@ -88,33 +88,33 @@ function validatePanel(raw: unknown, index: number): WorkbenchPanel {
   return panel as WorkbenchPanel;
 }
 
-/** Validate a parsed workbench document; throws scene-invalid on any mismatch. */
-export function validateScene(raw: unknown): WorkbenchScene {
+/** Validate a parsed workbench document; throws workbench-invalid on any mismatch. */
+export function validateWorkbench(raw: unknown): Workbench {
   if (!isRecord(raw)) invalid('配置必须是 JSON 对象');
-  const scene = raw as Record<string, unknown>;
-  if (!isWorkbenchId(scene['id'])) invalid('缺少合法的 id');
-  if (typeof scene['name'] !== 'string' || scene['name'].trim() === '') invalid('缺少名称');
-  if (scene['description'] !== undefined && typeof scene['description'] !== 'string') {
+  const workbench = raw as Record<string, unknown>;
+  if (!isWorkbenchId(workbench['id'])) invalid('缺少合法的 id');
+  if (typeof workbench['name'] !== 'string' || workbench['name'].trim() === '') invalid('缺少名称');
+  if (workbench['description'] !== undefined && typeof workbench['description'] !== 'string') {
     invalid('description 必须是字符串');
   }
-  if (scene['cols'] !== undefined && !isPositiveInteger(scene['cols'])) invalid('cols 必须是正整数');
-  if (!Array.isArray(scene['panels'])) invalid('panels 必须是数组');
-  scene['panels'].forEach((panel, index) => validatePanel(panel, index));
-  return scene as WorkbenchScene;
+  if (workbench['cols'] !== undefined && !isPositiveInteger(workbench['cols'])) invalid('cols 必须是正整数');
+  if (!Array.isArray(workbench['panels'])) invalid('panels 必须是数组');
+  workbench['panels'].forEach((panel, index) => validatePanel(panel, index));
+  return workbench as Workbench;
 }
 
-/** Parse a workbench file body; bad JSON is file-corrupt, bad shape scene-invalid. */
-export function parseWorkbench(text: string): WorkbenchScene {
+/** Parse a workbench file body; bad JSON is file-corrupt, bad shape workbench-invalid. */
+export function parseWorkbench(text: string): Workbench {
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (error) {
     throw new WorkbenchStoreError('file-corrupt', error instanceof Error ? error.message : String(error));
   }
-  return validateScene(raw);
+  return validateWorkbench(raw);
 }
 
 /** Serialize a workbench back to disk: stable 2-space JSON with a trailing newline. */
-export function serializeWorkbench(scene: WorkbenchScene): string {
-  return `${JSON.stringify(scene, null, 2)}\n`;
+export function serializeWorkbench(workbench: Workbench): string {
+  return `${JSON.stringify(workbench, null, 2)}\n`;
 }

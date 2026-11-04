@@ -6,11 +6,11 @@
  * Tickets #3–#5 scope: first-run root setup, the empty state, the list with its
  * reconciliation flags, readable errors, the grid view of one workbench, the
  * create flow (auto id + context card saved by the Host) and the config
- * drawer/autosave owned by `scene-editor`.
+ * drawer/autosave owned by `workbench-editor`.
  *
  * Ticket #6 adds the multi-workbench shell: restoring the last used workbench
  * on mount, switching between them, deleting the open one with a confirmation,
- * and the refresh action that re-reads the root, the list and the open scene so
+ * and the refresh action that re-reads the root, the list and the open workbench so
  * AI edits made on disk become visible.
  */
 import * as React from 'react';
@@ -19,9 +19,9 @@ import { CreateWorkbenchDialog } from './create-workbench-dialog';
 import { HeroBackdrop, HERO_BASE } from './hero-backdrop';
 import { requestRootPick, type RootPickFallbackReason } from './root-picker';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
-import { SceneEditor } from './scene-editor';
+import { WorkbenchEditor } from './workbench-editor';
 import type { SessionShell } from './session-shell';
-import { createWorkbenchScene } from './workbench-draft';
+import { createWorkbench } from './workbench-draft';
 import {
   browserStorage,
   clearLastWorkbench,
@@ -35,7 +35,7 @@ import {
   isOpenable,
 } from './workbench-status';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
-import type { WorkbenchScene } from '../shared/workbench/schema';
+import type { Workbench } from '../shared/workbench/schema';
 
 /** The main-panel key this bundle owns. */
 export const PANEL_ID = 'hello-word';
@@ -79,14 +79,14 @@ const PANEL_CSS = `
 .dshwb-item:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
 .dshwb-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-item-chevron{flex:0 0 auto;color:rgba(226,234,248,.45);font-size:15px;line-height:1}
-.dshwb-content-scene{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
-.dshwb-scene{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
-.dshwb-scene-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.dshwb-scene-heading{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}
-.dshwb-scene-name{margin:0;overflow:hidden;color:#eef3fb;font-size:15px;font-weight:600;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-scene-id{overflow:hidden;max-width:40%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-scene-meta{flex:0 0 auto;color:rgba(226,234,248,.55);font-size:11.5px;white-space:nowrap}
-.dshwb-scene-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
+.dshwb-content-workbench{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.dshwb-workbench-heading{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}
+.dshwb-workbench-name{margin:0;overflow:hidden;color:#eef3fb;font-size:15px;font-weight:600;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-id{overflow:hidden;max-width:40%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-meta{flex:0 0 auto;color:rgba(226,234,248,.55);font-size:11.5px;white-space:nowrap}
+.dshwb-workbench-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
 .dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
@@ -120,7 +120,7 @@ type PanelState =
 type PanelView =
   | { kind: 'list' }
   | { kind: 'opening'; id: string }
-  | { kind: 'scene'; scene: WorkbenchScene; configure?: boolean }
+  | { kind: 'workbench'; workbench: Workbench; configure?: boolean }
   | { kind: 'open-error'; id: string; message: string };
 
 /** Props injected by the panel slot, plus the Host RPC the entry composes in. */
@@ -183,18 +183,18 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const openCreate = (): void => setCreating(true);
 
   /** Persist a brand-new workbench, then refresh the list and open it. */
-  const createWorkbench = async (name: string, id: string): Promise<void> => {
+  const createAndOpenWorkbench = async (name: string, id: string): Promise<void> => {
     if (rpc === undefined) {
       throw new WorkbenchRpcError('internal', tr('error.connection', '连接服务不可用，请稍后重试'));
     }
-    const scene = createWorkbenchScene(id, name, tr('panel.new.reserved', '占位面板'));
-    const saved = (await rpc.save(scene)).scene;
+    const workbench = createWorkbench(id, name, tr('panel.new.reserved', '占位面板'));
+    const saved = (await rpc.save(workbench)).workbench;
     const list = await rpc.list();
     setState({ phase: 'ready', root: list.root, entries: list.entries });
     setCreating(false);
     writeLastWorkbench(storage, saved.id);
     setDrawerOpen(true);
-    setView({ kind: 'scene', scene: saved, configure: true });
+    setView({ kind: 'workbench', workbench: saved, configure: true });
   };
 
   const load = React.useCallback(async (): Promise<void> => {
@@ -226,8 +226,8 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     if (rpc === undefined) return;
     setView({ kind: 'opening', id });
     try {
-      const { scene } = await rpc.read(id);
-      setView({ kind: 'scene', scene });
+      const { workbench } = await rpc.read(id);
+      setView({ kind: 'workbench', workbench });
       writeLastWorkbench(storage, id);
       // The Host clears the "adopted" marker on a successful read; mirror that
       // in the switcher without paying for another list round-trip.
@@ -265,12 +265,12 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       const list = await rpc.list();
       setState({ phase: 'ready', root: list.root, entries: list.entries });
       const current = viewRef.current;
-      if (current.kind !== 'scene') return;
+      if (current.kind !== 'workbench') return;
       try {
-        const { scene } = await rpc.read(current.scene.id);
-        setView({ kind: 'scene', scene });
+        const { workbench } = await rpc.read(current.workbench.id);
+        setView({ kind: 'workbench', workbench });
       } catch (error) {
-        setView({ kind: 'open-error', id: current.scene.id, message: readableError(error) });
+        setView({ kind: 'open-error', id: current.workbench.id, message: readableError(error) });
       }
     } catch (error) {
       setState({ phase: 'error', message: readableError(error) });
@@ -553,8 +553,8 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
           ),
     );
 
-  /** The scene view: the editor owns live state, autosave and the drawer. */
-  const renderSceneEditor = (scene: WorkbenchScene): React.ReactElement => {
+  /** The workbench view: the editor owns live state, autosave and the drawer. */
+  const renderWorkbenchEditor = (workbench: Workbench): React.ReactElement => {
     const client = rpc;
     if (client === undefined) {
       return React.createElement(
@@ -572,15 +572,15 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         ),
       );
     }
-    return React.createElement(SceneEditor, {
-      key: scene.id,
-      scene,
+    return React.createElement(WorkbenchEditor, {
+      key: workbench.id,
+      workbench,
       tr,
       client,
       shell: props.shell,
       entries: state.phase === 'ready' ? state.entries : [],
       defaultDrawerOpen:
-        view.kind === 'scene' && view.configure === true ? true : drawerOpen,
+        view.kind === 'workbench' && view.configure === true ? true : drawerOpen,
       onBack: () => void load(),
       onReload: () => void refresh(),
       onSwitch: (id: string) => void openWorkbench(id),
@@ -594,7 +594,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     React.createElement(
       'div',
       { className: 'dshwb-card' },
-      React.createElement('h2', { className: 'dshwb-card-title' }, tr('scene.error.title', '打开工作台失败')),
+      React.createElement('h2', { className: 'dshwb-card-title' }, tr('workbench.error.title', '打开工作台失败')),
       React.createElement('p', { className: 'dshwb-card-sub' }, message),
       React.createElement(
         'div',
@@ -602,7 +602,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         React.createElement(
           'button',
           { type: 'button', className: 'dshwb-secondary', onClick: () => setView({ kind: 'list' }) },
-          tr('scene.back', '返回列表'),
+          tr('workbench.back', '返回列表'),
         ),
         React.createElement(
           'button',
@@ -613,7 +613,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     );
 
   let body: React.ReactNode;
-  let sceneView = false;
+  let workbenchView = false;
   if (state.phase === 'loading') {
     body = React.createElement('p', { className: 'dshwb-loading' }, tr('list.loading', '正在读取…'));
   } else if (state.phase === 'no-root') {
@@ -621,11 +621,11 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   } else if (state.phase === 'ready') {
     if (editingRoot) {
       body = renderRootForm();
-    } else if (view.kind === 'scene') {
-      sceneView = true;
-      body = renderSceneEditor(view.scene);
+    } else if (view.kind === 'workbench') {
+      workbenchView = true;
+      body = renderWorkbenchEditor(view.workbench);
     } else if (view.kind === 'opening') {
-      body = React.createElement('p', { className: 'dshwb-loading' }, tr('scene.opening', '正在打开…'));
+      body = React.createElement('p', { className: 'dshwb-loading' }, tr('workbench.opening', '正在打开…'));
     } else if (view.kind === 'open-error') {
       body = renderOpenError(view.id, view.message);
     } else {
@@ -674,15 +674,15 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     React.createElement(HeroBackdrop),
     React.createElement(
       'div',
-      { className: sceneView ? 'dshwb-content dshwb-content-scene' : 'dshwb-content' },
-      sceneView ? body : React.createElement('div', { className: 'dshwb-stack' }, body),
+      { className: workbenchView ? 'dshwb-content dshwb-content-workbench' : 'dshwb-content' },
+      workbenchView ? body : React.createElement('div', { className: 'dshwb-stack' }, body),
     ),
     creating &&
       React.createElement(CreateWorkbenchDialog, {
         translate: tr,
         takenIds,
         onClose: () => setCreating(false),
-        onCreate: createWorkbench,
+        onCreate: createAndOpenWorkbench,
       }),
   );
 }

@@ -10,7 +10,7 @@ import {
   parseWorkbench,
   serializeWorkbench,
   type WorkbenchPanel,
-  type WorkbenchScene,
+  type Workbench,
 } from '../../shared/workbench/schema';
 
 /** A `harness` panel with the three binding fields; overrides merge in. */
@@ -119,7 +119,7 @@ describe('bindingPatch', () => {
 
 describe('harness binding on disk', () => {
   it('keeps type-specific fields and unknown panel fields intact through save and read', () => {
-    const scene: WorkbenchScene = {
+    const workbench: Workbench = {
       id: 'demo',
       name: 'Demo',
       cols: 4,
@@ -133,9 +133,9 @@ describe('harness binding on disk', () => {
       ],
     };
 
-    const read = parseWorkbench(serializeWorkbench(scene));
+    const read = parseWorkbench(serializeWorkbench(workbench));
 
-    expect(read.panels[0]).toEqual(scene.panels[0]);
+    expect(read.panels[0]).toEqual(workbench.panels[0]);
     expect(harnessBinding(read.panels[0])).toEqual({
       sessionTitle: '会话 A',
       sessionId: 's-1',

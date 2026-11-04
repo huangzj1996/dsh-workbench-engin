@@ -4,7 +4,7 @@ var BASE_MESSAGE = {
   "root-unset": "\u5C1A\u672A\u8BBE\u7F6E\u5DE5\u4F5C\u53F0\u6839\u76EE\u5F55",
   "root-unreachable": "\u65E0\u6CD5\u8BBF\u95EE\u5DE5\u4F5C\u53F0\u6839\u76EE\u5F55",
   "id-invalid": "\u5DE5\u4F5C\u53F0 id \u4E0D\u5408\u6CD5",
-  "scene-invalid": "\u5DE5\u4F5C\u53F0\u914D\u7F6E\u4E0D\u5408\u6CD5",
+  "workbench-invalid": "\u5DE5\u4F5C\u53F0\u914D\u7F6E\u4E0D\u5408\u6CD5",
   "write-failed": "\u5199\u5165\u5931\u8D25",
   "file-corrupt": "\u6587\u4EF6\u635F\u574F",
   "not-found": "\u672A\u627E\u5230\u8BE5\u5DE5\u4F5C\u53F0",
@@ -34,7 +34,7 @@ function isPositiveInteger(value) {
   return typeof value === "number" && Number.isInteger(value) && value >= 1;
 }
 function invalid(reason) {
-  throw new WorkbenchStoreError("scene-invalid", reason);
+  throw new WorkbenchStoreError("workbench-invalid", reason);
 }
 function validatePanel(raw, index) {
   if (!isRecord(raw)) invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u4E0D\u662F\u5BF9\u8C61`);
@@ -59,18 +59,18 @@ function validatePanel(raw, index) {
   }
   return panel;
 }
-function validateScene(raw) {
+function validateWorkbench(raw) {
   if (!isRecord(raw)) invalid("\u914D\u7F6E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
-  const scene = raw;
-  if (!isWorkbenchId(scene["id"])) invalid("\u7F3A\u5C11\u5408\u6CD5\u7684 id");
-  if (typeof scene["name"] !== "string" || scene["name"].trim() === "") invalid("\u7F3A\u5C11\u540D\u79F0");
-  if (scene["description"] !== void 0 && typeof scene["description"] !== "string") {
+  const workbench = raw;
+  if (!isWorkbenchId(workbench["id"])) invalid("\u7F3A\u5C11\u5408\u6CD5\u7684 id");
+  if (typeof workbench["name"] !== "string" || workbench["name"].trim() === "") invalid("\u7F3A\u5C11\u540D\u79F0");
+  if (workbench["description"] !== void 0 && typeof workbench["description"] !== "string") {
     invalid("description \u5FC5\u987B\u662F\u5B57\u7B26\u4E32");
   }
-  if (scene["cols"] !== void 0 && !isPositiveInteger(scene["cols"])) invalid("cols \u5FC5\u987B\u662F\u6B63\u6574\u6570");
-  if (!Array.isArray(scene["panels"])) invalid("panels \u5FC5\u987B\u662F\u6570\u7EC4");
-  scene["panels"].forEach((panel, index) => validatePanel(panel, index));
-  return scene;
+  if (workbench["cols"] !== void 0 && !isPositiveInteger(workbench["cols"])) invalid("cols \u5FC5\u987B\u662F\u6B63\u6574\u6570");
+  if (!Array.isArray(workbench["panels"])) invalid("panels \u5FC5\u987B\u662F\u6570\u7EC4");
+  workbench["panels"].forEach((panel, index) => validatePanel(panel, index));
+  return workbench;
 }
 function parseWorkbench(text) {
   let raw;
@@ -79,10 +79,10 @@ function parseWorkbench(text) {
   } catch (error) {
     throw new WorkbenchStoreError("file-corrupt", error instanceof Error ? error.message : String(error));
   }
-  return validateScene(raw);
+  return validateWorkbench(raw);
 }
-function serializeWorkbench(scene) {
-  return `${JSON.stringify(scene, null, 2)}
+function serializeWorkbench(workbench) {
+  return `${JSON.stringify(workbench, null, 2)}
 `;
 }
 
@@ -126,11 +126,11 @@ import path from "node:path";
 
 // src/shared/workbench/context-card.ts
 var CONTEXT_CARD_PURPOSE_PLACEHOLDER = "\uFF08\u5F85\u8865\u5145\uFF09";
-function contextCardMarkdown(scene) {
-  const purpose = scene.description !== void 0 && scene.description.trim() !== "" ? scene.description.trim() : CONTEXT_CARD_PURPOSE_PLACEHOLDER;
-  const id = scene.id;
+function contextCardMarkdown(workbench) {
+  const purpose = workbench.description !== void 0 && workbench.description.trim() !== "" ? workbench.description.trim() : CONTEXT_CARD_PURPOSE_PLACEHOLDER;
+  const id = workbench.id;
   return [
-    `# ${scene.name}`,
+    `# ${workbench.name}`,
     "",
     `> \u5DE5\u4F5C\u53F0 id\uFF1A\`${id}\``,
     "",
@@ -271,15 +271,15 @@ async function scanWorkbenchIds(fs, root) {
   }
   return ids.sort();
 }
-async function readSceneOrNull(fs, file) {
+async function readWorkbenchOrNull(fs, file) {
   try {
     return parseWorkbench(await fs.readFile(file, "utf8"));
   } catch {
     return null;
   }
 }
-async function ensureContextCard(fs, root, scene) {
-  const file = path.join(root, scene.id, `${scene.id}${CONTEXT_CARD_SUFFIX}`);
+async function ensureContextCard(fs, root, workbench) {
+  const file = path.join(root, workbench.id, `${workbench.id}${CONTEXT_CARD_SUFFIX}`);
   try {
     await fs.stat(file);
     return;
@@ -289,7 +289,7 @@ async function ensureContextCard(fs, root, scene) {
     }
   }
   try {
-    await fs.writeFile(file, contextCardMarkdown(scene), "utf8");
+    await fs.writeFile(file, contextCardMarkdown(workbench), "utf8");
   } catch (error) {
     throw new WorkbenchStoreError("write-failed", describe2(error));
   }
@@ -389,14 +389,14 @@ function createWorkbenchStore(options) {
         entries.push({ id: entry.id, name: entry.id, status: "missing", order: entry.order });
         continue;
       }
-      const scene = await readSceneOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
-      if (scene === null) {
+      const workbench = await readWorkbenchOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
+      if (workbench === null) {
         entries.push({ id: entry.id, name: entry.id, status: "corrupt", order: entry.order });
         continue;
       }
       entries.push({
         id: entry.id,
-        name: scene.name,
+        name: workbench.name,
         status: adopted.has(entry.id) ? "adopted" : "ok",
         order: entry.order
       });
@@ -418,22 +418,22 @@ function createWorkbenchStore(options) {
     if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
     }
-    let scene;
+    let workbench;
     try {
-      scene = parseWorkbench(text);
+      workbench = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
       throw new WorkbenchStoreError("file-corrupt", describe2(error));
     }
     adoptedByRoot.get(root)?.delete(id);
-    return { scene };
+    return { workbench };
   }
   async function save(rootInput, payload) {
     const root = path.resolve(rootInput);
     const rawId = typeof payload === "object" && payload !== null ? payload["id"] : void 0;
     const id = assertWorkbenchId(rawId);
-    const scene = validateScene(payload);
-    const text = serializeWorkbench(scene);
+    const workbench = validateWorkbench(payload);
+    const text = serializeWorkbench(workbench);
     if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
     }
@@ -443,14 +443,14 @@ function createWorkbenchStore(options) {
     } catch (error) {
       throw new WorkbenchStoreError("write-failed", describe2(error));
     }
-    await ensureContextCard(fs, root, scene);
+    await ensureContextCard(fs, root, workbench);
     const { data: index } = await readIndex(fs, root);
     if (!index.workbenches.some((entry) => entry.id === id)) {
       const nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;
       index.workbenches.push({ id, order: nextOrder });
       await writeIndex(fs, root, index);
     }
-    return { scene };
+    return { workbench };
   }
   async function deleteWorkbench(rootInput, idInput) {
     const id = assertWorkbenchId(idInput);
@@ -523,7 +523,7 @@ function createWorkbenchRpc(options) {
         case "read":
           return { ok: true, value: await store.read(await resolveRoot(), field(call.payload, "id")) };
         case "save":
-          return { ok: true, value: await store.save(await resolveRoot(), field(call.payload, "scene")) };
+          return { ok: true, value: await store.save(await resolveRoot(), field(call.payload, "workbench")) };
         case "delete":
           return { ok: true, value: await store.delete(await resolveRoot(), field(call.payload, "id")) };
         default:
