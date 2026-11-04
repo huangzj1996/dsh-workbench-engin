@@ -5,8 +5,7 @@
  * HTTP-agnostic below `route`: tests call `dispatch` directly, while the Host
  * entry registers `route` on `connection.fetch`.
  */
-import { describeError } from '../../shared/workbench/errors';
-import { WorkbenchStoreError } from '../../shared/workbench/schema';
+import { describeError, WorkbenchStoreError } from '../../shared/workbench/errors';
 import {
   parseWorkbenchCall,
   parseWorkbenchClientRequest,

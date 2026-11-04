@@ -26,70 +26,6 @@ function describeError(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-// src/shared/workbench/schema.ts
-var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
-function isWorkbenchId(value) {
-  return typeof value === "string" && WORKBENCH_ID_PATTERN.test(value);
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isPositiveInteger(value) {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1;
-}
-function invalid(reason) {
-  throw new WorkbenchStoreError("workbench-invalid", reason);
-}
-function validatePanel(raw, index) {
-  if (!isRecord(raw)) invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u4E0D\u662F\u5BF9\u8C61`);
-  const panel = raw;
-  if (typeof panel["id"] !== "string" || panel["id"].trim() === "") {
-    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11 id`);
-  }
-  if (typeof panel["title"] !== "string") invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u6807\u9898`);
-  if (typeof panel["type"] !== "string" || panel["type"].trim() === "") {
-    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u7C7B\u578B`);
-  }
-  if (panel["sub"] !== void 0 && typeof panel["sub"] !== "string") {
-    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684\u526F\u6807\u9898\u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
-  }
-  for (const key of ["col", "row", "w", "h"]) {
-    if (panel[key] !== void 0 && !isPositiveInteger(panel[key])) {
-      invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 ${key} \u5FC5\u987B\u662F\u6B63\u6574\u6570`);
-    }
-  }
-  if (panel["expand"] !== void 0 && typeof panel["expand"] !== "boolean") {
-    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 expand \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
-  }
-  return panel;
-}
-function validateWorkbench(raw) {
-  if (!isRecord(raw)) invalid("\u914D\u7F6E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
-  const workbench = raw;
-  if (!isWorkbenchId(workbench["id"])) invalid("\u7F3A\u5C11\u5408\u6CD5\u7684 id");
-  if (typeof workbench["name"] !== "string" || workbench["name"].trim() === "") invalid("\u7F3A\u5C11\u540D\u79F0");
-  if (workbench["description"] !== void 0 && typeof workbench["description"] !== "string") {
-    invalid("description \u5FC5\u987B\u662F\u5B57\u7B26\u4E32");
-  }
-  if (workbench["cols"] !== void 0 && !isPositiveInteger(workbench["cols"])) invalid("cols \u5FC5\u987B\u662F\u6B63\u6574\u6570");
-  if (!Array.isArray(workbench["panels"])) invalid("panels \u5FC5\u987B\u662F\u6570\u7EC4");
-  workbench["panels"].forEach((panel, index) => validatePanel(panel, index));
-  return workbench;
-}
-function parseWorkbench(text) {
-  let raw;
-  try {
-    raw = JSON.parse(text);
-  } catch (error) {
-    throw new WorkbenchStoreError("file-corrupt", error instanceof Error ? error.message : String(error));
-  }
-  return validateWorkbench(raw);
-}
-function serializeWorkbench(workbench) {
-  return `${JSON.stringify(workbench, null, 2)}
-`;
-}
-
 // src/shared/workbench/protocol.ts
 var RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 var WORKBENCH_RPC_ENDPOINT = "workbench";
@@ -185,6 +121,70 @@ function contextCardMarkdown(workbench) {
     "- \u9700\u8981\u5B9E\u65F6\u540C\u6B65\u7684\u72B6\u6001\uFF08\u4EE5 JSON \u6587\u4EF6\u548C\u754C\u9762\u4E3A\u51C6\uFF09\u3002",
     ""
   ].join("\n");
+}
+
+// src/shared/workbench/schema.ts
+var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+function isWorkbenchId(value) {
+  return typeof value === "string" && WORKBENCH_ID_PATTERN.test(value);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isPositiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+function invalid(reason) {
+  throw new WorkbenchStoreError("workbench-invalid", reason);
+}
+function validatePanel(raw, index) {
+  if (!isRecord(raw)) invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u4E0D\u662F\u5BF9\u8C61`);
+  const panel = raw;
+  if (typeof panel["id"] !== "string" || panel["id"].trim() === "") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11 id`);
+  }
+  if (typeof panel["title"] !== "string") invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u6807\u9898`);
+  if (typeof panel["type"] !== "string" || panel["type"].trim() === "") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u7C7B\u578B`);
+  }
+  if (panel["sub"] !== void 0 && typeof panel["sub"] !== "string") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684\u526F\u6807\u9898\u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  }
+  for (const key of ["col", "row", "w", "h"]) {
+    if (panel[key] !== void 0 && !isPositiveInteger(panel[key])) {
+      invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 ${key} \u5FC5\u987B\u662F\u6B63\u6574\u6570`);
+    }
+  }
+  if (panel["expand"] !== void 0 && typeof panel["expand"] !== "boolean") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 expand \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
+  }
+  return panel;
+}
+function validateWorkbench(raw) {
+  if (!isRecord(raw)) invalid("\u914D\u7F6E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
+  const workbench = raw;
+  if (!isWorkbenchId(workbench["id"])) invalid("\u7F3A\u5C11\u5408\u6CD5\u7684 id");
+  if (typeof workbench["name"] !== "string" || workbench["name"].trim() === "") invalid("\u7F3A\u5C11\u540D\u79F0");
+  if (workbench["description"] !== void 0 && typeof workbench["description"] !== "string") {
+    invalid("description \u5FC5\u987B\u662F\u5B57\u7B26\u4E32");
+  }
+  if (workbench["cols"] !== void 0 && !isPositiveInteger(workbench["cols"])) invalid("cols \u5FC5\u987B\u662F\u6B63\u6574\u6570");
+  if (!Array.isArray(workbench["panels"])) invalid("panels \u5FC5\u987B\u662F\u6570\u7EC4");
+  workbench["panels"].forEach((panel, index) => validatePanel(panel, index));
+  return workbench;
+}
+function parseWorkbench(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new WorkbenchStoreError("file-corrupt", describeError(error));
+  }
+  return validateWorkbench(raw);
+}
+function serializeWorkbench(workbench) {
+  return `${JSON.stringify(workbench, null, 2)}
+`;
 }
 
 // src/host/workbench/store.ts

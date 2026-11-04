@@ -18,9 +18,6 @@ const NS = 'workbench';
 /** Simplified Chinese dictionary. */
 const zh: Record<string, string> = {
   'menu.label': '工作台',
-  'empty.hint': '还没有工作台',
-  'empty.sub': '创建你的第一个工作台，沉淀任务、资料与工作流。',
-  'empty.action': '创建工作台',
   'dialog.title': '创建工作台',
   'dialog.sub': '给它起个名字，之后再配置子面板与版面。',
   'dialog.nameLabel': '工作台名称',
@@ -161,9 +158,6 @@ const zh: Record<string, string> = {
 /** English dictionary. */
 const en: Record<string, string> = {
   'menu.label': 'Workbench',
-  'empty.hint': 'No workbench yet',
-  'empty.sub': 'Create your first workbench to keep tasks, files and flows together.',
-  'empty.action': 'Create workbench',
   'dialog.title': 'Create workbench',
   'dialog.sub': 'Name it first — configure panels and layout next.',
   'dialog.nameLabel': 'Workbench name',
@@ -176,8 +170,6 @@ const en: Record<string, string> = {
   'dialog.idHint': 'The id is also the folder name and cannot change after creation; copy it to an AI.',
   'dialog.copy': 'Copy',
   'dialog.copied': 'Copied',
-  'created.hint': 'Current workbench',
-  'created.action': 'New workbench',
   'root.title': 'Set the workbench root folder',
   'root.sub': 'The index and every workbench JSON will be written into this folder.',
   'root.label': 'Root folder path',

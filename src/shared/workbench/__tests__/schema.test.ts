@@ -1,7 +1,8 @@
 /// <reference types="node" />
 import { describe, expect, it } from 'vitest';
 
-import { parseWorkbench, serializeWorkbench, WorkbenchStoreError } from '../schema';
+import { WorkbenchStoreError } from '../errors';
+import { parseWorkbench, serializeWorkbench } from '../schema';
 
 /** Capture a thrown WorkbenchStoreError so both code and message can be asserted. */
 function thrown(fn: () => unknown): WorkbenchStoreError {

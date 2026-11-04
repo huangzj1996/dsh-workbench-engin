@@ -6,7 +6,7 @@
  * payload })`. Failures are rethrown as `WorkbenchRpcError` with the Host's
  * stable `code` and its readable Chinese `message`.
  */
-import type { WorkbenchErrorCode } from '../shared/workbench/errors';
+import { describeError, type WorkbenchErrorCode } from '../shared/workbench/errors';
 import type {
   PickRootResult,
   RootConfig,
@@ -99,10 +99,7 @@ export function createWorkbenchClient(ctx: ClientRpcContext): WorkbenchClient {
     try {
       reply = await rpc.call(CARRIER_CHANNEL, CARRIER_ENDPOINT, { method, payload });
     } catch (error) {
-      throw new WorkbenchRpcError(
-        'internal',
-        error instanceof Error ? error.message : String(error),
-      );
+      throw new WorkbenchRpcError('internal', describeError(error));
     }
 
     const envelope = reply as WorkbenchRpcResult | null;

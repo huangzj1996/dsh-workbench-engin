@@ -37,14 +37,12 @@ export const AUTOSAVE_DELAY_MS = 300;
 
 /** Styles for the workbench body and its save indicator. */
 export const WORKBENCH_EDITOR_CSS = `
-.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
 .dshwb-workbench-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
 .dshwb-workbench-body>.dshwb-grid-wrap{flex:1;min-width:0}
-.dshwb-save-status{flex:0 0 auto;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap}
-.dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:#ffb4a8;font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
-.dshwb-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.dshwb-confirm-text{flex:0 1 auto;max-width:260px;color:#ffb4a8;font-size:11.5px;line-height:1.5}
+.dshwb-save-status{flex:0 0 auto;color:var(--dsw-alias-label-secondary);font-size:11.5px;white-space:nowrap}
+.dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:var(--dsw-alias-state-error-primary);font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid var(--dsw-alias-border-l4);border-radius:9px;background:var(--dshwb-tint);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
+.dshwb-switch:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 `;
 // The narrow-window overlay rule lives in DRAWER_CSS (config-drawer) so it is
 // declared after the drawer's base width rules and actually wins.

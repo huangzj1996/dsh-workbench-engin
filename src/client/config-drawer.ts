@@ -10,6 +10,8 @@
 import * as React from 'react';
 
 import { useCopyToClipboard } from './clipboard';
+import { attemptOpenSession } from './open-session';
+import { panelIndexLabel } from '../shared/workbench/grid';
 import { bindingPatch, harnessBinding, parsePinTargetText } from './harness-binding';
 import { findSession, harnessOpenTarget } from './harness-view';
 import { PANEL_TYPES, panelTypeDefinition, panelTypeLabel, type PanelType } from './panel-types';
@@ -47,25 +49,23 @@ export interface ConfigDrawerProps {
 
 /** Styles for the drawer; injected with the component (panel styles are global). */
 export const DRAWER_CSS = `
-.dshwb-drawer{box-sizing:border-box;display:flex;flex:0 0 380px;flex-direction:column;max-width:380px;min-height:0;overflow:auto;padding:12px 14px 20px;border:1px solid rgba(255,255,255,.13);border-radius:13px;background:rgba(9,15,26,.82);backdrop-filter:blur(14px);box-shadow:0 14px 36px rgba(0,0,0,.28);color:#eef3fb}
+.dshwb-drawer{box-sizing:border-box;display:flex;flex:0 0 380px;flex-direction:column;max-width:380px;min-height:0;overflow:auto;padding:12px 14px 20px;border:1px solid var(--dsw-alias-border-l2);border-radius:13px;background:var(--dshwb-glass-strong);backdrop-filter:blur(14px);box-shadow:0 14px 36px rgba(0,0,0,.28);color:var(--dsw-alias-label-primary)}
 .dshwb-drawer-head{display:flex;align-items:center;gap:8px;margin:0 0 4px}
 .dshwb-drawer-title{margin:0;flex:1;font-size:14px;font-weight:600;line-height:1.4}
-.dshwb-drawer-section{margin:12px 0 0;padding:12px 0 0;border-top:1px solid rgba(255,255,255,.1)}
-.dshwb-drawer-section-title{margin:0 0 10px;color:rgba(226,234,248,.7);font-size:11.5px;font-weight:600;letter-spacing:.06em}
+.dshwb-drawer-section{margin:12px 0 0;padding:12px 0 0;border-top:1px solid var(--dsw-alias-border-l1)}
+.dshwb-drawer-section-title{margin:0 0 10px;color:var(--dsw-alias-label-secondary);font-size:11.5px;font-weight:600;letter-spacing:.06em}
 .dshwb-field{margin:0 0 10px}
-.dshwb-field-label{display:block;margin:0 0 5px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-field-label{display:block;margin:0 0 5px;color:var(--dsw-alias-label-secondary);font-size:12px}
 .dshwb-textarea{min-height:62px;resize:vertical;line-height:1.5;font-family:inherit}
 .dshwb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.dshwb-idrow{display:flex;align-items:center;gap:8px}
-.dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-panel-list{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;padding:0;list-style:none}
-.dshwb-panel-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid rgba(255,255,255,.1);border-radius:9px;background:rgba(255,255,255,.04)}
-.dshwb-panel-row-active{border-color:var(--dsw-alias-brand-primary);background:rgba(86,160,255,.12)}
+.dshwb-panel-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dshwb-tint)}
+.dshwb-panel-row-active{border-color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)}
 .dshwb-panel-pick{display:flex;flex:1;min-width:0;align-items:center;gap:7px;padding:4px 5px;border:0;border-radius:6px;background:none;color:inherit;font-family:inherit;font-size:12px;text-align:left;cursor:pointer}
-.dshwb-panel-pick:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
-.dshwb-panel-ordinal{flex:0 0 auto;color:rgba(169,206,255,.85);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
+.dshwb-panel-pick:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}
+.dshwb-panel-ordinal{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
 .dshwb-panel-name{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12.5px}
-.dshwb-panel-kind{flex:0 0 auto;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px}
+.dshwb-panel-kind{flex:0 0 auto;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px}
 .dshwb-icon-btn{box-sizing:border-box;display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:12px;line-height:1;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
 .dshwb-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
 .dshwb-icon-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
@@ -73,16 +73,15 @@ export const DRAWER_CSS = `
 .dshwb-icon-btn:disabled{opacity:.4;cursor:not-allowed}
 .dshwb-icon-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}
 .dshwb-confirm{display:flex;flex:0 0 auto;align-items:center;gap:4px}
-.dshwb-confirm-text{color:#ffb4a8;font-size:11px;white-space:nowrap}
 .dshwb-add-row{display:flex;flex-wrap:wrap;gap:8px}
 .dshwb-add-row .dshwb-input{flex:1;min-width:0;color-scheme:dark}
 .dshwb-drawer select.dshwb-input{color-scheme:dark}
-.dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
-.dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-drawer-hint{margin:0;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.6}
+.dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.5}
 .dshwb-drawer-openrow{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}
-.dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
-.dshwb-session-dot-running{background:#56a0ff}
-.dshwb-session-dot-warn{background:#ffc454}
+.dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:var(--dshwb-dot-idle)}
+.dshwb-session-dot-running{background:var(--dsw-alias-state-business-primary)}
+.dshwb-session-dot-warn{background:var(--dsw-alias-state-warn-primary)}
 @media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
 `;
 
@@ -96,12 +95,6 @@ function stringField(panel: WorkbenchPanel, key: string): string {
 function stringArrayField(panel: WorkbenchPanel, key: string): string[] {
   const value = panel[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
-/** Raw string read for controlled inputs: never trims while the user types. */
-function rawStringField(panel: WorkbenchPanel, key: string): string {
-  const value = panel[key];
-  return typeof value === 'string' ? value : '';
 }
 
 /** Dropdown label for one shell session. */
@@ -144,7 +137,7 @@ function HarnessFields(props: {
   const open = (): void => {
     if (openTarget === null) return;
     setOpenFailed(false);
-    if (shell === undefined || !shell.openSession(openTarget)) setOpenFailed(true);
+    if (!attemptOpenSession(shell, openTarget)) setOpenFailed(true);
   };
   const openRow: React.ReactNode =
     openTarget === null
@@ -206,7 +199,7 @@ function HarnessFields(props: {
       React.createElement(TextField, {
         id: 'dshwb-panel-session-id',
         label: tr('panel.sessionId', '会话 id'),
-        value: rawStringField(panel, 'sessionId'),
+        value: stringField(panel, 'sessionId'),
         placeholder: tr('panel.sessionIdPlaceholder', '要打开的会话'),
         onValue: (value: string) => onValue({ sessionId: value }),
       }),
@@ -215,7 +208,7 @@ function HarnessFields(props: {
       React.createElement(TextField, {
         id: 'dshwb-panel-session-title',
         label: tr('panel.sessionTitle', '会话标题'),
-        value: rawStringField(panel, 'sessionTitle'),
+        value: stringField(panel, 'sessionTitle'),
         placeholder: tr('panel.sessionTitlePlaceholder', '显示在门牌上的标题'),
         onValue: (value: string) => onValue({ sessionTitle: value }),
       }),
@@ -302,7 +295,7 @@ function HarnessFields(props: {
     React.createElement(TextField, {
       id: 'dshwb-panel-session-title',
       label: tr('panel.sessionTitle', '会话标题'),
-      value: rawStringField(panel, 'sessionTitle'),
+      value: stringField(panel, 'sessionTitle'),
       placeholder: tr('panel.sessionTitlePlaceholder', '显示在门牌上的标题'),
       hint: tr('panel.sessionTitleHint', '门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。'),
       onValue: (value: string) => onValue({ sessionTitle: value }),
@@ -572,7 +565,7 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
                 React.createElement(
                   'span',
                   { className: 'dshwb-panel-ordinal' },
-                  String(index + 1).padStart(2, '0'),
+                  panelIndexLabel(index + 1),
                 ),
                 React.createElement(
                   'span',

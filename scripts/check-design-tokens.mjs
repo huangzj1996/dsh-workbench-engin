@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * Design-token guard: button rules must pair design tokens instead of literal
- * colours (docs/design/button-system.md §5.4). This version covers the rules
- * whose class name marks them as buttons; the remaining non-button literals are
- * tracked in the token follow-up ticket.
+ * Design-token guard: every workbench CSS rule must colour through tokens.
+ *
+ * Scope and exemptions come from docs/design/button-system.md §3.7:
+ *  - every CSS rule in `src/**` is checked (not just buttons),
+ *  - the token island (`--dshwb-panel-root`) is the one place static values live,
+ *  - `var(--token, #fff)` fallbacks are allowed,
+ *  - decorative shadows and gradients keep their literals.
  *
  * Usage: node scripts/check-design-tokens.mjs [repo-root]
  */
@@ -15,9 +18,25 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 const SCAN_EXTENSIONS = /\.(?:ts|tsx|js|mjs)$/;
 const SKIP_DIRECTORIES = new Set(['node_modules', '__tests__']);
 
-/** Selectors that are button rules, i.e. the surface this check owns. */
-const BUTTON_SELECTOR = /\.dshwb-(?:btn|primary|secondary|link|icon-btn|harness-open|harness-card)(?![\w-])/;
-/** Properties where the brand fill colour must never stand in for text/ring. */
+/** The one rule allowed to declare static colour values. */
+const ISLAND_SELECTOR = /\.dshwb-panel-root\b/;
+/** Properties whose colours must come from tokens. */
+const BANNED_PROPERTIES = new Set([
+  'color',
+  'background',
+  'background-color',
+  'border',
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left',
+  'border-color',
+  'outline',
+  'outline-color',
+  'fill',
+  'stroke',
+]);
+/** Properties where the brand fill colour must never stand in for a foreground. */
 const FOREGROUND_PROPERTIES = new Set(['color', 'outline', 'outline-color', 'border', 'border-color']);
 const HEX_COLOUR = /#[0-9a-fA-F]{3,8}\b/g;
 const RGB_COLOUR = /\brgba?\([^)]*\)/g;
@@ -60,29 +79,40 @@ try {
 }
 
 const violations = [];
-let buttonRules = 0;
+let rules = 0;
 for (const file of files) {
   const text = await readFile(file, 'utf8');
   const relative = path.relative(root, file).replaceAll('\\', '/');
   for (const match of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const selector = match[1];
-    if (!BUTTON_SELECTOR.test(selector)) continue;
-    buttonRules += 1;
+    // The selector may sit after template-literal text; only its last line is CSS.
+    const selector = (match[1].split(/[\n`]/).pop() ?? match[1]).trim();
+    // CSS-in-TS lives in template strings; only class-selector rules are ours.
+    if (!/^\.[A-Za-z0-9_-]/.test(selector)) continue;
+    if (ISLAND_SELECTOR.test(selector)) continue;
+    rules += 1;
     const braceIndex = (match.index ?? 0) + match[0].indexOf('{');
     const line = text.slice(0, braceIndex).split('\n').length;
     const declarations = match[2];
-    const stripped = withoutTokenFallbacks(declarations);
-    const ruleName = selector.trim().split(/\s+/).pop() ?? selector.trim();
+    const ruleName = selector.split(/\s+/).pop() ?? selector;
     const report = (detail) => violations.push(`${relative}:${line}: ${ruleName} ${detail}`);
 
-    for (const literal of stripped.match(HEX_COLOUR) ?? []) report(`使用了字面量颜色 ${literal}`);
-    for (const literal of stripped.match(RGB_COLOUR) ?? []) report(`使用了字面量颜色 ${literal}`);
-    if (/filter\s*:\s*brightness/.test(stripped)) report('使用了 filter:brightness（改用 token 的 hover 填充）');
+    if (/filter\s*:\s*brightness/.test(withoutTokenFallbacks(declarations))) {
+      report('使用了 filter:brightness（改用 token 的 hover 填充）');
+    }
     for (const declaration of declarations.split(';')) {
       const separator = declaration.indexOf(':');
       if (separator < 0) continue;
       const property = declaration.slice(0, separator).trim().toLowerCase();
       const value = declaration.slice(separator + 1);
+      if (BANNED_PROPERTIES.has(property)) {
+        const stripped = withoutTokenFallbacks(value);
+        for (const literal of stripped.match(HEX_COLOUR) ?? []) {
+          report(`${property} 使用了字面量颜色 ${literal}`);
+        }
+        for (const literal of stripped.match(RGB_COLOUR) ?? []) {
+          report(`${property} 使用了字面量颜色 ${literal}`);
+        }
+      }
       if (FOREGROUND_PROPERTIES.has(property) && value.includes('--dsw-alias-brand-primary')) {
         report(`把 --dsw-alias-brand-primary 当作 ${property}（品牌色只做填充）`);
       }
@@ -95,4 +125,4 @@ if (violations.length > 0) {
   console.log(`design-tokens: ${violations.length} violation(s)`);
   process.exit(1);
 }
-console.log(`design-tokens clean: ${String(buttonRules)} button rule(s) checked`);
+console.log(`design-tokens clean: ${String(rules)} rule(s) checked`);

@@ -14,6 +14,7 @@ import * as React from 'react';
 
 import { harnessBinding } from '../harness-binding';
 import { harnessBadgeView, harnessOpenTarget } from '../harness-view';
+import { attemptOpenSession } from '../open-session';
 import { useSessionSnapshot } from '../use-session-snapshot';
 import type { PanelRendererProps } from './types';
 
@@ -25,16 +26,16 @@ export const HARNESS_CSS = `
 .dshwb-harness-card:active{background:var(--dsw-alias-interactive-bg-active)}
 .dshwb-harness-card:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
 .dshwb-harness-head{display:flex;align-items:center;gap:8px;min-width:0}
-.dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-harness-status{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:10.5px;line-height:1.7;white-space:nowrap}
-.dshwb-harness-running{background:rgba(86,160,255,.2);color:#a9ceff}
-.dshwb-harness-idle{background:rgba(255,255,255,.08);color:rgba(226,234,248,.62)}
-.dshwb-harness-unknown{background:rgba(255,196,84,.16);color:#ffd88e}
-.dshwb-harness-id{margin:0;overflow:hidden;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
-.dshwb-harness-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
-.dshwb-harness-reason{margin:0;color:rgba(226,234,248,.72);font-size:12px;line-height:1.6}
-.dshwb-harness-error{margin:0;color:#ffb4a8;font-size:11.5px;line-height:1.6}
-.dshwb-harness-degraded{padding:10px 12px;border:1px dashed rgba(255,196,84,.35);border-radius:10px;background:rgba(255,196,84,.06)}
+.dshwb-harness-running{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 20%, transparent);color:var(--dsw-alias-state-business-primary)}
+.dshwb-harness-idle{background:var(--dshwb-tint);color:var(--dsw-alias-label-secondary)}
+.dshwb-harness-unknown{background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);color:var(--dsw-alias-state-warn-primary)}
+.dshwb-harness-id{margin:0;overflow:hidden;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-hint{margin:0;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.6}
+.dshwb-harness-reason{margin:0;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.6}
+.dshwb-harness-error{margin:0;color:var(--dsw-alias-state-error-primary);font-size:11.5px;line-height:1.6}
+.dshwb-harness-degraded{padding:10px 12px;border:1px dashed color-mix(in srgb, var(--dsw-alias-state-warn-primary) 35%, transparent);border-radius:10px;background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 6%, transparent)}
 .dshwb-harness-open{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);font-weight:500;line-height:var(--dsw-font-xs-13-line-height);white-space:nowrap;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
 .dshwb-harness-open:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
 .dshwb-harness-open:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
@@ -66,7 +67,7 @@ export function HarnessPanel(props: PanelRendererProps): React.ReactElement {
   const open = (): void => {
     if (openTarget === null) return;
     setOpenFailed(false);
-    if (shell === undefined || !shell.openSession(openTarget)) setOpenFailed(true);
+    if (!attemptOpenSession(shell, openTarget)) setOpenFailed(true);
   };
 
   /** Fallback action for a badge whose session the shell cannot describe. */

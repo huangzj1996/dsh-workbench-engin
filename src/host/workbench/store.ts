@@ -10,8 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { contextCardMarkdown } from '../../shared/workbench/context-card';
-import { describeError } from '../../shared/workbench/errors';
-import { WorkbenchStoreError } from '../../shared/workbench/schema';
+import { describeError, WorkbenchStoreError } from '../../shared/workbench/errors';
 import type {
   RootConfig,
   WorkbenchList,

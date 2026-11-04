@@ -92,9 +92,33 @@ describe('check-design-tokens', () => {
     expect(result.stdout).toContain('#fff');
   });
 
-  it('ignores the same literal outside a button rule', async () => {
+  it('fails on a literal colour outside a button rule too', async () => {
     const root = await fixture({
       'src/client/panel.ts': 'export const CSS = `.dshwb-harness-title{color:#eef3fb}`;\n',
+    });
+
+    const result = await runCheck('check-design-tokens.mjs', root);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('.dshwb-harness-title');
+    expect(result.stdout).toContain('#eef3fb');
+  });
+
+  it('allows the token island to declare the static colour values', async () => {
+    const root = await fixture({
+      'src/client/panel.ts':
+        'export const CSS = `.dshwb-panel-root{--dsw-alias-label-primary:#f9fafb;--dshwb-glass:rgba(9,15,26,.62)}`;\n',
+    });
+
+    const result = await runCheck('check-design-tokens.mjs', root);
+
+    expect(result.code).toBe(0);
+  });
+
+  it('leaves decorative shadows out of the colour ban', async () => {
+    const root = await fixture({
+      'src/client/panel.ts':
+        'export const CSS = `.dshwb-panel{box-shadow:0 14px 36px rgba(0,0,0,.28)}`;\n',
     });
 
     const result = await runCheck('check-design-tokens.mjs', root);

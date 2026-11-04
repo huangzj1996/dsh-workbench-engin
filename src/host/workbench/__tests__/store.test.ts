@@ -5,7 +5,7 @@ import path from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { WorkbenchStoreError } from '../../../shared/workbench/schema';
+import { WorkbenchStoreError } from '../../../shared/workbench/errors';
 import { createWorkbenchStore, nodeFsAdapter } from '../store';
 
 /** A fresh private directory under the OS temp dir. */

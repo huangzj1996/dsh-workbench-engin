@@ -5,7 +5,6 @@
  * error codes cannot drift; nothing here touches the filesystem or the DOM.
  */
 import type { WorkbenchErrorCode } from './errors';
-import type { Workbench } from './schema';
 
 /** The seven methods the Host route accepts. */
 export type WorkbenchRpcMethod =
@@ -133,15 +132,4 @@ export function workbenchServerResponse(
   result: WorkbenchRpcResult,
 ): WorkbenchServerResponse {
   return { type: 'server-response', rpcId, result };
-}
-
-/** Method-specific value shapes, for the Client helper's return types. */
-export interface WorkbenchRpcValues {
-  getRootConfig: RootConfig;
-  setRoot: { root: string };
-  pickRoot: PickRootResult;
-  list: WorkbenchList;
-  read: { workbench: Workbench };
-  save: { workbench: Workbench };
-  delete: { id: string };
 }

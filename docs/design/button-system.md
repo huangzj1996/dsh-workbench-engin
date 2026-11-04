@@ -280,10 +280,37 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 
 要点：
 
-- 用**静态色板 token**（`--dsw-static-*`）而不是抄 hex，静态色板与主题无关，外壳换主题时不会反转；alpha 叠层（边框、hover）沿用深色主题的透明度值。
-- 只挂在 `.dshwb-panel-root` 上，不覆盖 `body` / `:root`；出现在面板外的组件（如 `renderers/harness.ts` 的 `dshwb-harness`）不继承这个 island。
-- 以后新增按钮/控件时，若用到其他别名 token（背景层、阴影等），同样要检查它在深色画布上的效果；或者干脆使用静态色板。
+- 用**静态色板 token**（`--dsw-static-*`）而不是抄 hex，静态色板与主题无关，外壳换主题时不会反转；alpha 叠层（边框、hover、玻璃底、状态淡彩）沿用深色主题的透明度值/`color-mix`。
+- 只挂在 `.dshwb-panel-root` 上，不覆盖 `body` / `:root`；面板内的组件（含 `renderers/harness.ts` 的门牌）都继承它，面板外的 DOM 没有继承关系。
+- 本轮第二批把 island 扩到 `--dsw-alias-label-caption`、`--dsw-alias-border-l1/l2/l4`、`--dsw-alias-state-warn-primary`，以及画布专用 `--dshwb-glass*` / `--dshwb-tint*` / `--dshwb-overlay` / `--dshwb-dot-idle`；其余规则一律引用，不再写值（见 3.8 与 5.4）。
 - 如果哪天把面板做成跟随主题的浅色画布，就删掉 island、改用别名 token，两者不能混用。
+
+### 3.8 控件规格（行卡片 / 输入框 / 开关 / 徽标）
+
+按钮之外的控件也只用 token；静态值只允许出现在 3.7 的 token island（`--dshwb-glass*`、`--dshwb-tint*`、`--dshwb-overlay`、`--dshwb-dot-idle` 与别名 token 一起定义在那里）。
+
+**行卡片**（`.dshwb-item`、`.dshwb-panel`、`.dshwb-card`、`.dshwb-drawer`、`.dshwb-dialog`、`.dshwb-panel-row`）
+
+- 表面：行卡片/输入框/开关/ID 值框用 `--dshwb-tint`；玻璃容器用 `--dshwb-glass*`；遮罩用 `--dshwb-overlay`。
+- 描边：默认 `--dsw-alias-border-l1/l2`，hover 或强调 `--dsw-alias-border-l4`。
+- 可点击行卡片：hover 用 `--dsw-alias-interactive-bg-hover`，active 用 `--dsw-alias-interactive-bg-active`；不做位移/缩放。
+- 焦点环：一律用 3.5 的外壳规则，不用品牌填充色。
+
+**输入框 / 开关 / 文本域**（`.dshwb-input`、`.dshwb-switch`、`.dshwb-textarea`）
+
+- 边框 `--dsw-alias-border-l4`，底色 `--dshwb-tint`，文字 `--dsw-alias-label-primary`，placeholder `--dsw-alias-label-caption`。
+- focus：`border-color:var(--dsw-alias-state-business-primary)`；开关 focus 用外壳焦点环。
+- `color-scheme:dark` 只加在深色画布内的原生控件（select/date 等会弹原生面板的）上。
+
+**状态徽标**（`.dshwb-badge-*`、`.dshwb-panel-type`、`.dshwb-panel-warn`、harness 状态）
+
+- 文字与底色取同一状态族：business（运行中 / 外部新建）、warn（缺失 / 坐标越界）、error（损坏 / 失败）、label-secondary（空闲）。
+- 底色用 `color-mix(in srgb, var(--token) N%, transparent)`（N 取 6–20），不再写字面量 rgba。
+- `degraded` 卡片：`1px dashed color-mix(..., warn 35%)` + `color-mix(..., warn 6%)` 底。
+
+**文字层级**：primary（≥ .75）、secondary（.55–.74）、tertiary（.45–.54）、caption（< .45），对应 `--dsw-alias-label-primary/secondary/tertiary/caption`。
+
+> 这一节的边界由 `npm run check:design-tokens` 强制：它扫描 `src/**` 的每条 class 规则，只允许 token island、`var()` fallback 与阴影/渐变保留字面量。
 
 ## 4. 交互规范
 
@@ -365,7 +392,7 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 
 同一批调用点都已使用这些类，无需改结构：`workbench.ts:415/479/499/531/673/713/752/757`、`create-workbench-dialog.ts:136/155/160`、`config-drawer.ts:155/534/674/801`、`workbench-editor.ts:323/368/381/397/409/420/430/437`、`renderers/harness.ts:75`。
 
-2026-11-04 已落地：`workbench.ts` 的 `.dshwb-primary` / `.dshwb-secondary` / `.dshwb-link` / `.dshwb-link-danger`，`config-drawer.ts` 的 `.dshwb-icon-btn` 系列改成 token 配对 + 外壳焦点规则；同时给面板根加 `.dshwb-panel-root` 深色画布 token 锁定（见 3.7）。同日晚补齐 harness 按钮：`.dshwb-harness-open` 改为 secondary `--sm`（28px、`border-l3`、`label-primary`、交互叠层、外壳焦点环），`.dshwb-harness-card`（可点击卡片）的 hover/active/focus 改用交互叠层与外壳焦点环。`.dshwb-item` 行卡片、输入框、状态徽标等留给下一批。
+2026-11-04 已落地：`workbench.ts` 的 `.dshwb-primary` / `.dshwb-secondary` / `.dshwb-link` / `.dshwb-link-danger`，`config-drawer.ts` 的 `.dshwb-icon-btn` 系列改成 token 配对 + 外壳焦点规则；同时给面板根加 `.dshwb-panel-root` 深色画布 token 锁定（见 3.7）。同日晚补齐 harness 按钮：`.dshwb-harness-open` 改为 secondary `--sm`（28px、`border-l3`、`label-primary`、交互叠层、外壳焦点环），`.dshwb-harness-card`（可点击卡片）的 hover/active/focus 改用交互叠层与外壳焦点环。同日晚第二批随后完成其余控件的迁移（行卡片 / 输入框 / 开关 / 状态徽标，见 5.4 与 3.8），"下一批"清单已清空。
 
 ### 5.2 参考实现（可直接落进各 CSS 字符串）
 
@@ -443,7 +470,7 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 
 - [ ] 深色主题：primary 为近白底 + 近黑字（不再是白底白字）；hover 可见；键盘聚焦出 2px 蓝环，鼠标点击不出环。
 - [ ] 浅色主题：secondary / link / icon 为深字浅底，全部可读；hover/焦点可见。
-- [ ] 组件内不再出现字面量按钮色：`color:#fff`、`#eef3fb`、`rgba(255,255,255`、`rgba(226,234,248` 只允许出现在 token fallback。
+- [ ] 组件内不再出现字面量控件色：`color:#fff`、`#eef3fb`、`rgba(255,255,255`、`rgba(226,234,248` 只允许出现在 token fallback。这条由 `npm run check:design-tokens` 强制（覆盖全部 class 规则，token island / 阴影 / 渐变豁免）。
 - [ ] 所有按钮 `height`/`radius`/`font-size` 收敛到 3.3 的表；icon 按钮 ≥28px。
 - [ ] `:active` 不再有 `transform`/`filter`；hover 只改颜色。
 - [ ] 加载中：宽度不跳、按钮禁用、`aria-busy="true"`、文案为进行时。
@@ -481,6 +508,14 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 两图里按钮完全一致：近白底 + 近黑字的 primary、描边 secondary、浅灰 link、28px icon 按钮、禁用的「创建」都清晰可读；键盘聚焦的「键盘聚焦」按钮有 2px 蓝色焦点环。白底白字问题消失。
 
 尚未验证：真实 GUI 里的插件需要重新激活（关闭再打开 `dsh-hello-word`，或按 App 的刷新按钮）才会加载新的 `client.js`；本会话无法操作 GUI 点击，所以这一步需要人工刷新后再切深浅主题确认。刷新后对照点：打开「工作台」面板 → 工具栏「新建工作台」应变成近白底近黑字；打开「创建工作台」弹框确认「创建」可读；打开配置抽屉确认 28px 图标按钮。
+
+#### 第二批：其余控件（2026-11-04 晚）
+
+- token island 扩展：`--dsw-alias-label-caption`、`--dsw-alias-border-l1/l2/l4`、`--dsw-alias-state-warn-primary`，以及画布专用 `--dshwb-glass/glass-strong/glass-opaque/overlay/tint/tint-strong/dot-idle`。
+- 迁移文件：`workbench.ts`、`workbench-grid.ts`、`workbench-editor.ts`、`config-drawer.ts`、`renderers/harness.ts`，共 74 条规则改成 token / `color-mix`；面板文字、玻璃容器、行卡片、输入框、开关、状态徽标全部脱离字面量。
+- 去重：`.dshwb-workbench`（workbench.ts 保留）、`.dshwb-idrow/.dshwb-idvalue`（workbench.ts 保留）、`.dshwb-confirm-text`（workbench.ts 一份 canonical）。
+- 自动验证：`npm run check` → 17 个测试文件、165 个用例全绿；`design-tokens clean: 1047 → 见输出（仅 class 规则计数）`；`check:vocabulary` clean。
+- 本轮仍人工确认：重新激活插件后切 light/dark 主题，面板/抽屉/卡片/徽标文字与背景可读；本次没有浏览器截图，故只记录代码级验证。
 
 ## 6. 参考来源
 

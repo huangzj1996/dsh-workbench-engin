@@ -5,10 +5,7 @@
  * panel are part of the contract (an AI may write future fields), so validation
  * checks the known fields and returns the parsed object untouched.
  */
-import { WorkbenchStoreError } from './errors';
-
-export { WorkbenchStoreError };
-export type { WorkbenchErrorCode } from './errors';
+import { describeError, WorkbenchStoreError } from './errors';
 
 /** Legal workbench id: lowercase ASCII, starts alphanumeric, at most 64 chars. */
 export const WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
@@ -112,7 +109,7 @@ export function parseWorkbench(text: string): Workbench {
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    throw new WorkbenchStoreError('file-corrupt', error instanceof Error ? error.message : String(error));
+    throw new WorkbenchStoreError('file-corrupt', describeError(error));
   }
   return validateWorkbench(raw);
 }
