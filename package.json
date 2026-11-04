@@ -9,6 +9,9 @@
     "build": "tsc --noEmit && node scripts/build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "check": "npm run typecheck && npm test && npm run build && npm run check:vocabulary && npm run check:design-tokens",
+    "check:vocabulary": "node scripts/check-vocabulary.mjs",
+    "check:design-tokens": "node scripts/check-design-tokens.mjs",
     "dev": "node scripts/build.mjs --watch"
   },
   "exports": {
