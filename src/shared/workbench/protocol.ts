@@ -49,10 +49,59 @@ export interface WorkbenchList {
   entries: WorkbenchListEntry[];
 }
 
-/** One RPC reply: a value on success, a stable code + Chinese message on failure. */
+/**
+ * One RPC reply: a value on success, a stable code + Chinese message on failure.
+ * `details` is part of the shell's envelope contract — it must always be a
+ * record, so every Host failure carries at least `{}`.
+ */
 export type WorkbenchRpcResult =
   | { ok: true; value: unknown }
-  | { ok: false; error: { code: WorkbenchErrorCode; message: string } };
+  | {
+      ok: false;
+      error: { code: WorkbenchErrorCode; message: string; details: Record<string, unknown> };
+    };
+
+/** Correlation-id shape the shell's generic RPC caller accepts. */
+const RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+
+/** The envelope the shell's `connection.rpc.call` posts to our route. */
+export interface WorkbenchClientRequest {
+  type: 'client-request';
+  rpcId: string;
+  method: string;
+  payload: unknown;
+}
+
+/** The envelope the shell validates before handing the inner `result` back. */
+export interface WorkbenchServerResponse {
+  type: 'server-response';
+  rpcId: string;
+  result: WorkbenchRpcResult;
+}
+
+/**
+ * Validate one request body against the shell's client-request envelope.
+ * Returns `null` for anything malformed so the Host can answer 400 without
+ * inventing an rpcId the Client would then reject as a mismatch.
+ */
+export function parseWorkbenchClientRequest(body: unknown): WorkbenchClientRequest | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+  const record = body as Record<string, unknown>;
+  if (record['type'] !== 'client-request') return null;
+  const rpcId = record['rpcId'];
+  if (typeof rpcId !== 'string' || !RPC_ID_PATTERN.test(rpcId)) return null;
+  const method = record['method'];
+  if (typeof method !== 'string' || method === '') return null;
+  return { type: 'client-request', rpcId, method, payload: record['payload'] };
+}
+
+/** Wrap one dispatch result in the envelope the shell's Client unwraps. */
+export function workbenchServerResponse(
+  rpcId: string,
+  result: WorkbenchRpcResult,
+): WorkbenchServerResponse {
+  return { type: 'server-response', rpcId, result };
+}
 
 /** Method-specific value shapes, for the Client helper's return types. */
 export interface WorkbenchRpcValues {

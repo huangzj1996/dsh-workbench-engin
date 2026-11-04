@@ -177,22 +177,70 @@ describe('workbench RPC', () => {
     });
   });
 
-  it('serves the POST carrier route shape used by the Host registration', async () => {
+  it('answers the shell client-request envelope with a server-response envelope', async () => {
     const dshHome = await tempDir('dsh-home');
     const rpc = createWorkbenchRpc({ dshHome });
     const request = new Request('http://localhost/api/workbench', {
       method: 'POST',
-      body: JSON.stringify({ method: 'getRootConfig', payload: {} }),
+      body: JSON.stringify({
+        type: 'client-request',
+        rpcId: 'rpc-1',
+        method: 'getRootConfig',
+        payload: {},
+      }),
     });
 
     const response = await rpc.route(request);
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ ok: true, value: { root: null } });
+    await expect(response.json()).resolves.toEqual({
+      type: 'server-response',
+      rpcId: 'rpc-1',
+      result: { ok: true, value: { root: null } },
+    });
     const methodNotAllowed = await rpc.route(
       new Request('http://localhost/api/workbench', { method: 'GET' }),
     );
     expect(methodNotAllowed.status).toBe(405);
+  });
+
+  it('wraps a failing dispatch in the same server-response envelope', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'rpc-2',
+          method: 'list',
+          payload: {},
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      type: 'server-response',
+      rpcId: 'rpc-2',
+      result: {
+        ok: false,
+        error: { code: 'root-unset', message: expect.any(String), details: {} },
+      },
+    });
+  });
+
+  it('rejects a malformed request envelope with 400 instead of inventing an rpcId', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({ method: 'getRootConfig', payload: {} }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
   });
 });
 

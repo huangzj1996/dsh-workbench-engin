@@ -89,6 +89,22 @@ function serializeWorkbench(workbench) {
 `;
 }
 
+// src/shared/workbench/protocol.ts
+var RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+function parseWorkbenchClientRequest(body) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const record = body;
+  if (record["type"] !== "client-request") return null;
+  const rpcId = record["rpcId"];
+  if (typeof rpcId !== "string" || !RPC_ID_PATTERN.test(rpcId)) return null;
+  const method = record["method"];
+  if (typeof method !== "string" || method === "") return null;
+  return { type: "client-request", rpcId, method, payload: record["payload"] };
+}
+function workbenchServerResponse(rpcId, result) {
+  return { type: "server-response", rpcId, result };
+}
+
 // src/host/workbench/picker.ts
 function isNative(capability) {
   return capability.kind === "native" && typeof capability.pick === "function";
@@ -520,11 +536,11 @@ function field(payload, key) {
 }
 function failure(error) {
   if (error instanceof WorkbenchStoreError) {
-    return { ok: false, error: { code: error.code, message: error.message } };
+    return { ok: false, error: { code: error.code, message: error.message, details: {} } };
   }
   return {
     ok: false,
-    error: { code: "internal", message: describeError(error) }
+    error: { code: "internal", message: describeError(error), details: {} }
   };
 }
 function createWorkbenchRpc(options) {
@@ -571,11 +587,14 @@ function createWorkbenchRpc(options) {
     try {
       body = await request.json();
     } catch {
-      return Response.json(failure(new WorkbenchStoreError("internal", "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5\u7684 JSON")), {
-        status: 400
-      });
+      return new Response("request body is not JSON", { status: 400 });
     }
-    return Response.json(await dispatch(body));
+    const envelope = parseWorkbenchClientRequest(body);
+    if (envelope === null) {
+      return new Response("invalid client-request envelope", { status: 400 });
+    }
+    const result = await dispatch({ method: envelope.method, payload: envelope.payload });
+    return Response.json(workbenchServerResponse(envelope.rpcId, result));
   }
   return { dispatch, route };
 }

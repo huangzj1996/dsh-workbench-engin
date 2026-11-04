@@ -7,7 +7,12 @@
  */
 import { describeError } from '../../shared/workbench/errors';
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
-import type { WorkbenchRpcMethod, WorkbenchRpcResult } from '../../shared/workbench/protocol';
+import {
+  parseWorkbenchClientRequest,
+  workbenchServerResponse,
+  type WorkbenchRpcMethod,
+  type WorkbenchRpcResult,
+} from '../../shared/workbench/protocol';
 import { pickRootDirectory, type DirectoryPickerLookup } from './picker';
 import { createWorkbenchStore, type WorkbenchStoreOptions } from './store';
 
@@ -39,11 +44,11 @@ function field(payload: unknown, key: string): unknown {
 /** Map any thrown error to the RPC envelope, keeping store codes stable. */
 function failure(error: unknown): WorkbenchRpcResult {
   if (error instanceof WorkbenchStoreError) {
-    return { ok: false, error: { code: error.code, message: error.message } };
+    return { ok: false, error: { code: error.code, message: error.message, details: {} } };
   }
   return {
     ok: false,
-    error: { code: 'internal', message: describeError(error) },
+    error: { code: 'internal', message: describeError(error), details: {} },
   };
 }
 
@@ -100,11 +105,16 @@ export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
     try {
       body = await request.json();
     } catch {
-      return Response.json(failure(new WorkbenchStoreError('internal', '请求体不是合法的 JSON')), {
-        status: 400,
-      });
+      return new Response('request body is not JSON', { status: 400 });
     }
-    return Response.json(await dispatch(body));
+    const envelope = parseWorkbenchClientRequest(body);
+    if (envelope === null) {
+      // The shell rejects a reply that invents an rpcId ("rpcId mismatch"), so a
+      // malformed request becomes a plain 400 the Client reports as transport failure.
+      return new Response('invalid client-request envelope', { status: 400 });
+    }
+    const result = await dispatch({ method: envelope.method, payload: envelope.payload });
+    return Response.json(workbenchServerResponse(envelope.rpcId, result));
   }
 
   return { dispatch, route };
