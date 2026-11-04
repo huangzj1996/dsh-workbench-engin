@@ -22,6 +22,7 @@ import {
 } from '../shared/workbench/schema';
 import { panelRenderer } from './renderers';
 import { UnknownPanel } from './renderers/unknown';
+import type { SessionShell } from './session-shell';
 import type { Translate } from './translate';
 
 /** Styles for the grid and the panel chrome; injected once with the component. */
@@ -50,11 +51,13 @@ export interface WorkbenchGridProps {
   scene: WorkbenchScene;
   /** Translate helper bound to the workbench namespace. */
   tr: Translate;
+  /** The shell session list, for renderers that bind to a session. */
+  shell?: SessionShell;
 }
 
 /** The grid for one workbench, or an empty hint when it has no panels. */
 export function WorkbenchGrid(props: WorkbenchGridProps): React.ReactElement {
-  const { scene, tr } = props;
+  const { scene, tr, shell } = props;
   const cols = scene.cols ?? DEFAULT_COLS;
   return React.createElement(
     'div',
@@ -82,6 +85,7 @@ export function WorkbenchGrid(props: WorkbenchGridProps): React.ReactElement {
               index,
               cols,
               tr,
+              shell,
             }),
           ),
         ),
@@ -95,11 +99,12 @@ interface PanelFrameProps {
   /** Resolved `cols` for bounds reporting. */
   cols: number;
   tr: Translate;
+  shell?: SessionShell;
 }
 
 /** One sub-panel: grid placement, header chrome, renderer body. */
 function PanelFrame(props: PanelFrameProps): React.ReactElement {
-  const { panel, index, cols, tr } = props;
+  const { panel, index, cols, tr, shell } = props;
   const issues = panelBoundsIssues(panel, cols);
   const issuesText = issues.join('；');
   const ordinal = panelIndexLabel(index + 1);
@@ -147,7 +152,7 @@ function PanelFrame(props: PanelFrameProps): React.ReactElement {
       { className: 'dshwb-panel-body' },
       Renderer === undefined
         ? React.createElement(UnknownPanel, { panel, tr })
-        : React.createElement(Renderer, { panel, tr }),
+        : React.createElement(Renderer, { panel, tr, shell }),
     ),
   );
 }

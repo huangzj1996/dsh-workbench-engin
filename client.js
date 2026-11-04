@@ -42,7 +42,7 @@ __export(index_exports, {
   name: () => name
 });
 module.exports = __toCommonJS(index_exports);
-var React10 = __toESM(require("react"), 1);
+var React12 = __toESM(require("react"), 1);
 
 // src/client/rpc.ts
 var CARRIER_CHANNEL = "/api";
@@ -109,8 +109,185 @@ function createWorkbenchClient(ctx) {
   };
 }
 
+// src/client/session-shell.ts
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function serviceOf(ctx, name2) {
+  try {
+    const value = ctx.get(name2);
+    return isRecord(value) ? value : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function titleOf(row) {
+  for (const key of ["title", "displayTitle"]) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return "";
+}
+function sessionOf(id, row) {
+  return {
+    id,
+    title: titleOf(row),
+    running: row["running"] === true,
+    blank: row["blank"] === true
+  };
+}
+function rawSessions(sessions) {
+  const list = sessions?.list;
+  if (typeof list === "function") {
+    try {
+      return list();
+    } catch {
+      return void 0;
+    }
+  }
+  if (list !== void 0 && typeof list.getSnapshot === "function") {
+    try {
+      return list.getSnapshot();
+    } catch {
+      return void 0;
+    }
+  }
+  return void 0;
+}
+function normalizeSessions(raw) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (id, row) => {
+    const trimmed = id.trim();
+    if (trimmed === "" || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(sessionOf(trimmed, row));
+  };
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") {
+        push(item, {});
+      } else if (isRecord(item) && typeof item["id"] === "string") {
+        push(item["id"], item);
+      }
+    }
+    return out;
+  }
+  if (!isRecord(raw)) return [];
+  const byId = raw["byId"];
+  if (isRecord(byId)) {
+    const ids = Array.isArray(raw["ids"]) ? raw["ids"] : Object.keys(byId);
+    for (const id of ids) {
+      if (typeof id !== "string") continue;
+      const row = byId[id];
+      if (isRecord(row)) push(id, row);
+    }
+    for (const id of Object.keys(byId)) {
+      const row = byId[id];
+      if (isRecord(row)) push(id, row);
+    }
+    return out;
+  }
+  const items = raw["items"];
+  return Array.isArray(items) ? normalizeSessions(items) : [];
+}
+function currentIdOf(raw) {
+  if (!isRecord(raw)) return null;
+  const current = raw["current"];
+  return typeof current === "string" && current.trim() !== "" ? current.trim() : null;
+}
+function readSnapshot(ctx) {
+  const sessions = serviceOf(ctx, "sessions");
+  const raw = rawSessions(sessions);
+  return {
+    available: raw !== void 0,
+    sessions: normalizeSessions(raw),
+    currentId: currentIdOf(raw)
+  };
+}
+function listModelOf(ctx) {
+  const sessions = serviceOf(ctx, "sessions");
+  const list = sessions?.list;
+  return list !== void 0 && typeof list !== "function" && typeof list.getSnapshot === "function" ? list : null;
+}
+function sameSnapshot(a, b) {
+  if (a.available !== b.available || a.currentId !== b.currentId) return false;
+  if (a.sessions.length !== b.sessions.length) return false;
+  return a.sessions.every((session, index) => {
+    const other = b.sessions[index];
+    return other !== void 0 && session.id === other.id && session.title === other.title && session.running === other.running && session.blank === other.blank;
+  });
+}
+function createSessionShell(ctx) {
+  let cached = readSnapshot(ctx);
+  const listeners = /* @__PURE__ */ new Set();
+  let followedModel = null;
+  let stopFollowing = null;
+  const notifyIfChanged = () => {
+    const next = readSnapshot(ctx);
+    if (sameSnapshot(next, cached)) return;
+    cached = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const follow = () => {
+    const model = listModelOf(ctx);
+    if (model === followedModel) return;
+    if (stopFollowing !== null) {
+      try {
+        stopFollowing();
+      } catch {
+      }
+      stopFollowing = null;
+    }
+    followedModel = model;
+    if (model !== null && typeof model.subscribe === "function") {
+      try {
+        stopFollowing = model.subscribe(notifyIfChanged);
+      } catch {
+        stopFollowing = null;
+      }
+    }
+  };
+  return {
+    getSnapshot: () => cached,
+    subscribe(listener) {
+      listeners.add(listener);
+      follow();
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    openSession(sessionId) {
+      const target = sessionId.trim();
+      if (target === "") return false;
+      const ui = serviceOf(ctx, "uiWorkspace");
+      if (ui === void 0 || typeof ui.openSession !== "function") return false;
+      try {
+        const result = ui.openSession(target);
+        if (isRecord(result) && typeof result.then === "function") {
+          result.then(void 0, () => void 0);
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    refresh() {
+      const sessions = serviceOf(ctx, "sessions");
+      if (sessions !== void 0 && typeof sessions.refresh === "function") {
+        try {
+          void sessions.refresh();
+        } catch {
+        }
+      }
+      follow();
+      notifyIfChanged();
+    }
+  };
+}
+
 // src/client/workbench.ts
-var React9 = __toESM(require("react"), 1);
+var React11 = __toESM(require("react"), 1);
 
 // src/client/create-workbench-dialog.ts
 var React2 = __toESM(require("react"), 1);
@@ -680,10 +857,85 @@ function HeroBackdrop() {
 }
 
 // src/client/scene-editor.ts
-var React8 = __toESM(require("react"), 1);
+var React10 = __toESM(require("react"), 1);
 
 // src/client/config-drawer.ts
+var React5 = __toESM(require("react"), 1);
+
+// src/client/harness-binding.ts
+var LIST_SEPARATOR = /[,，]/;
+function normalizePinTarget(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item !== "");
+  }
+  if (typeof value === "string") {
+    return value.split(LIST_SEPARATOR).map((item) => item.trim()).filter((item) => item !== "");
+  }
+  return [];
+}
+function stringField(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+function harnessBinding(panel) {
+  return {
+    sessionTitle: stringField(panel, "sessionTitle"),
+    sessionId: stringField(panel, "sessionId"),
+    pinTarget: normalizePinTarget(panel["pinTarget"])
+  };
+}
+function bindingPatch(panel, session) {
+  const sessionId = session.id.trim();
+  if (sessionId === "") return null;
+  const sessionTitle = typeof session.title === "string" ? session.title.trim() : "";
+  return {
+    sessionId,
+    sessionTitle,
+    pinTarget: normalizePinTarget(panel["pinTarget"])
+  };
+}
+
+// src/client/harness-view.ts
+function findSession(snapshot, sessionId) {
+  const id = sessionId.trim();
+  if (id === "") return null;
+  return snapshot.sessions.find((session) => session.id === id) ?? null;
+}
+function harnessBadgeView(binding, snapshot) {
+  const sessionId = binding.sessionId.trim();
+  const storedTitle = binding.sessionTitle.trim();
+  if (sessionId === "") return { kind: "unbound", title: storedTitle };
+  if (!snapshot.available) return { kind: "unavailable", sessionId, title: storedTitle };
+  const session = findSession(snapshot, sessionId);
+  if (session === null) return { kind: "missing", sessionId, title: storedTitle };
+  return {
+    kind: "bound",
+    sessionId: session.id,
+    title: session.title.trim() !== "" ? session.title : storedTitle,
+    running: session.running
+  };
+}
+
+// src/client/use-session-snapshot.ts
 var React4 = __toESM(require("react"), 1);
+var NO_SHELL_SNAPSHOT = {
+  available: false,
+  sessions: [],
+  currentId: null
+};
+var noShellSnapshot = () => NO_SHELL_SNAPSHOT;
+var noShellSubscribe = () => () => void 0;
+function useSessionSnapshot(shell) {
+  const snapshot = React4.useSyncExternalStore(
+    shell?.subscribe ?? noShellSubscribe,
+    shell?.getSnapshot ?? noShellSnapshot,
+    shell?.getSnapshot ?? noShellSnapshot
+  );
+  React4.useEffect(() => {
+    shell?.refresh();
+  }, [shell]);
+  return snapshot;
+}
 
 // src/client/workbench-draft.ts
 var PANEL_TYPES = ["reserved", "harness"];
@@ -788,6 +1040,10 @@ var DRAWER_CSS = `
 .dshwb-add-row .dshwb-input{flex:1;min-width:0;color-scheme:dark}
 .dshwb-drawer select.dshwb-input{color-scheme:dark}
 .dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
+.dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
+.dshwb-session-dot-running{background:#56a0ff}
+.dshwb-session-dot-warn{background:#ffc454}
 @media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
 `;
 function panelTypeLabel(tr, type) {
@@ -795,7 +1051,7 @@ function panelTypeLabel(tr, type) {
   if (type === "harness") return tr("panel.type.harness", "会话门牌");
   return type;
 }
-function stringField(panel, key) {
+function stringField2(panel, key) {
   const value = panel[key];
   return typeof value === "string" ? value : "";
 }
@@ -806,20 +1062,153 @@ function stringArrayField(panel, key) {
 function parseStringList(raw) {
   return raw.split(",").map((item) => item.trim()).filter((item) => item !== "");
 }
+function rawStringField(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" ? value : "";
+}
+function sessionOptionLabel(tr, session) {
+  const title = session.title !== "" ? session.title : tr("panel.harness.untitled", "未命名会话");
+  return session.running ? `${title} · ${tr("panel.harness.running", "运行中")}` : title;
+}
+function HarnessFields(props) {
+  const { panel, tr, shell, onValue } = props;
+  const binding = harnessBinding(panel);
+  const snapshot = useSessionSnapshot(shell);
+  const bound = findSession(snapshot, binding.sessionId);
+  const missing = snapshot.available && binding.sessionId !== "" && bound === null;
+  const pick = (id) => {
+    if (id === "") {
+      onValue({ sessionId: "", sessionTitle: "" });
+      return;
+    }
+    const session = findSession(snapshot, id);
+    if (session === null) return;
+    const patch = bindingPatch(panel, session);
+    if (patch !== null) onValue(patch);
+  };
+  const pinTargetField = React5.createElement(TextField, {
+    id: "dshwb-panel-pin-target",
+    label: tr("panel.pinTarget", "定位目标"),
+    value: stringArrayField(panel, "pinTarget").join(", "),
+    placeholder: tr("panel.pinTargetPlaceholder", "多个用逗号分隔"),
+    onValue: (value) => onValue({ pinTarget: parseStringList(value) })
+  });
+  if (!snapshot.available) {
+    return React5.createElement(
+      React5.Fragment,
+      null,
+      React5.createElement(
+        "p",
+        { className: "dshwb-drawer-hint" },
+        tr(
+          "panel.sessions.unavailable",
+          "读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。"
+        )
+      ),
+      React5.createElement(TextField, {
+        id: "dshwb-panel-session-id",
+        label: tr("panel.sessionId", "会话 id"),
+        value: rawStringField(panel, "sessionId"),
+        placeholder: tr("panel.sessionIdPlaceholder", "要打开的会话"),
+        onValue: (value) => onValue({ sessionId: value })
+      }),
+      React5.createElement(TextField, {
+        id: "dshwb-panel-session-title",
+        label: tr("panel.sessionTitle", "会话标题"),
+        value: rawStringField(panel, "sessionTitle"),
+        placeholder: tr("panel.sessionTitlePlaceholder", "显示在门牌上的标题"),
+        onValue: (value) => onValue({ sessionTitle: value })
+      }),
+      pinTargetField
+    );
+  }
+  const options = [
+    React5.createElement(
+      "option",
+      { key: "", value: "" },
+      tr("panel.sessions.none", "未绑定（选一条会话）")
+    )
+  ];
+  for (const session of snapshot.sessions) {
+    options.push(
+      React5.createElement(
+        "option",
+        { key: session.id, value: session.id },
+        sessionOptionLabel(tr, session)
+      )
+    );
+  }
+  if (missing) {
+    const label = binding.sessionTitle !== "" ? binding.sessionTitle : binding.sessionId;
+    options.push(
+      React5.createElement(
+        "option",
+        { key: binding.sessionId, value: binding.sessionId },
+        `${label} · ${tr("panel.sessions.missing", "不可用")}`
+      )
+    );
+  }
+  const status = bound !== null ? React5.createElement(
+    "p",
+    { className: "dshwb-session-status" },
+    React5.createElement("span", {
+      className: bound.running ? "dshwb-session-dot dshwb-session-dot-running" : "dshwb-session-dot"
+    }),
+    bound.running ? tr("panel.harness.running", "运行中") : tr("panel.harness.idle", "空闲")
+  ) : missing ? React5.createElement(
+    "p",
+    { className: "dshwb-session-status" },
+    React5.createElement("span", { className: "dshwb-session-dot dshwb-session-dot-warn" }),
+    tr("panel.sessions.missing", "绑定的会话已不在外壳列表里")
+  ) : null;
+  return React5.createElement(
+    React5.Fragment,
+    null,
+    React5.createElement(
+      Field,
+      { label: tr("panel.sessions.label", "会话"), htmlFor: "dshwb-panel-session-pick" },
+      React5.createElement(
+        "select",
+        {
+          id: "dshwb-panel-session-pick",
+          className: "dshwb-input",
+          value: binding.sessionId,
+          onChange: (event) => pick(event.target.value)
+        },
+        options
+      )
+    ),
+    status,
+    snapshot.sessions.length === 0 && React5.createElement(
+      "p",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.sessions.empty", "外壳里还没有会话，先去侧栏建一条。")
+    ),
+    React5.createElement(TextField, {
+      id: "dshwb-panel-session-title",
+      label: tr("panel.sessionTitle", "会话标题"),
+      value: rawStringField(panel, "sessionTitle"),
+      placeholder: tr("panel.sessionTitlePlaceholder", "显示在门牌上的标题"),
+      hint: tr("panel.sessionTitleHint", "门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。"),
+      onValue: (value) => onValue({ sessionTitle: value })
+    }),
+    pinTargetField
+  );
+}
 function Field(props) {
-  return React4.createElement(
+  return React5.createElement(
     "div",
     { className: "dshwb-field" },
-    React4.createElement("label", { className: "dshwb-field-label", htmlFor: props.htmlFor }, props.label),
+    React5.createElement("label", { className: "dshwb-field-label", htmlFor: props.htmlFor }, props.label),
     props.children,
-    props.hint !== void 0 && React4.createElement("p", { className: "dshwb-drawer-hint" }, props.hint)
+    props.hint !== void 0 && React5.createElement("p", { className: "dshwb-drawer-hint" }, props.hint)
   );
 }
 function TextField(props) {
-  return React4.createElement(
+  return React5.createElement(
     Field,
     { label: props.label, htmlFor: props.id, hint: props.hint },
-    React4.createElement("input", {
+    React5.createElement("input", {
       id: props.id,
       className: "dshwb-input",
       type: "text",
@@ -833,10 +1222,10 @@ function TextField(props) {
   );
 }
 function TextAreaField(props) {
-  return React4.createElement(
+  return React5.createElement(
     Field,
     { label: props.label, htmlFor: props.id },
-    React4.createElement("textarea", {
+    React5.createElement("textarea", {
       id: props.id,
       className: "dshwb-input dshwb-textarea",
       value: props.value,
@@ -847,10 +1236,10 @@ function TextAreaField(props) {
   );
 }
 function NumberField(props) {
-  return React4.createElement(
+  return React5.createElement(
     Field,
     { label: props.label, htmlFor: props.id },
-    React4.createElement("input", {
+    React5.createElement("input", {
       id: props.id,
       className: "dshwb-input",
       type: "number",
@@ -875,42 +1264,23 @@ function NumberField(props) {
 function TypeFields(props) {
   const { panel, tr, onValue } = props;
   if (panel.type === "reserved") {
-    return React4.createElement(TextAreaField, {
+    return React5.createElement(TextAreaField, {
       id: `dshwb-panel-text`,
       label: tr("panel.text", "占位文本"),
-      value: stringField(panel, "text"),
+      value: stringField2(panel, "text"),
       placeholder: tr("panel.textPlaceholder", "占位面板里显示的文字"),
       onValue: (value) => onValue({ text: value })
     });
   }
   if (panel.type === "harness") {
-    return React4.createElement(
-      React4.Fragment,
-      null,
-      React4.createElement(TextField, {
-        id: "dshwb-panel-session-title",
-        label: tr("panel.sessionTitle", "会话标题"),
-        value: stringField(panel, "sessionTitle"),
-        placeholder: tr("panel.sessionTitlePlaceholder", "显示在门牌上的标题"),
-        onValue: (value) => onValue({ sessionTitle: value })
-      }),
-      React4.createElement(TextField, {
-        id: "dshwb-panel-session-id",
-        label: tr("panel.sessionId", "会话 id"),
-        value: stringField(panel, "sessionId"),
-        placeholder: tr("panel.sessionIdPlaceholder", "要打开的会话"),
-        onValue: (value) => onValue({ sessionId: value })
-      }),
-      React4.createElement(TextField, {
-        id: "dshwb-panel-pin-target",
-        label: tr("panel.pinTarget", "定位目标"),
-        value: stringArrayField(panel, "pinTarget").join(", "),
-        placeholder: tr("panel.pinTargetPlaceholder", "多个用逗号分隔"),
-        onValue: (value) => onValue({ pinTarget: parseStringList(value) })
-      })
-    );
+    return React5.createElement(HarnessFields, {
+      panel,
+      tr,
+      shell: props.shell,
+      onValue
+    });
   }
-  return React4.createElement(
+  return React5.createElement(
     "p",
     { className: "dshwb-drawer-hint" },
     tr("panel.unknownFields", "这个类型没有内置编辑器；它的未知字段会原样保存。")
@@ -919,10 +1289,10 @@ function TypeFields(props) {
 function ConfigDrawer(props) {
   const { scene, tr } = props;
   const { copied, copy } = useCopyToClipboard();
-  const [nameDraft, setNameDraft] = React4.useState(scene.name);
-  const [confirmDeleteId, setConfirmDeleteId] = React4.useState(null);
-  const [addType, setAddType] = React4.useState("reserved");
-  React4.useEffect(() => {
+  const [nameDraft, setNameDraft] = React5.useState(scene.name);
+  const [confirmDeleteId, setConfirmDeleteId] = React5.useState(null);
+  const [addType, setAddType] = React5.useState("reserved");
+  React5.useEffect(() => {
     setNameDraft(scene.name);
   }, [scene.id]);
   const commitName = (raw) => {
@@ -934,11 +1304,11 @@ function ConfigDrawer(props) {
   };
   const cols = scene.cols ?? DEFAULT_COLS;
   const selected = scene.panels.find((panel) => panel.id === props.selectedPanelId);
-  const workbenchSection = React4.createElement(
+  const workbenchSection = React5.createElement(
     "section",
     { className: "dshwb-drawer-section" },
-    React4.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.workbench", "工作台")),
-    React4.createElement(TextField, {
+    React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.workbench", "工作台")),
+    React5.createElement(TextField, {
       id: "dshwb-scene-name",
       label: tr("drawer.name", "名称"),
       value: nameDraft,
@@ -946,14 +1316,14 @@ function ConfigDrawer(props) {
       onValue: commitName,
       onBlur: commitNameOnBlur
     }),
-    React4.createElement(TextAreaField, {
+    React5.createElement(TextAreaField, {
       id: "dshwb-scene-description",
       label: tr("drawer.description", "描述"),
       value: scene.description ?? "",
       placeholder: tr("drawer.descriptionPlaceholder", "这个工作台是做什么的"),
       onValue: (value) => props.onWorkbenchChange({ description: value })
     }),
-    React4.createElement(NumberField, {
+    React5.createElement(NumberField, {
       id: "dshwb-scene-cols",
       label: tr("drawer.cols", "列数"),
       value: cols,
@@ -963,18 +1333,18 @@ function ConfigDrawer(props) {
         if (value !== void 0) props.onWorkbenchChange({ cols: value });
       }
     }),
-    React4.createElement(
+    React5.createElement(
       "div",
       { className: "dshwb-field" },
-      React4.createElement(
+      React5.createElement(
         "label",
         { className: "dshwb-field-label", htmlFor: "dshwb-scene-id" },
         tr("drawer.id", "id（创建后只读）")
       ),
-      React4.createElement(
+      React5.createElement(
         "div",
         { className: "dshwb-idrow" },
-        React4.createElement(
+        React5.createElement(
           "input",
           {
             id: "dshwb-scene-id",
@@ -985,7 +1355,7 @@ function ConfigDrawer(props) {
             onFocus: (event) => event.currentTarget.select()
           }
         ),
-        React4.createElement(
+        React5.createElement(
           "button",
           {
             type: "button",
@@ -997,21 +1367,21 @@ function ConfigDrawer(props) {
       )
     )
   );
-  const panelSection = React4.createElement(
+  const panelSection = React5.createElement(
     "section",
     { className: "dshwb-drawer-section" },
-    React4.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.panels", "子面板")),
-    scene.panels.length === 0 ? React4.createElement("p", { className: "dshwb-drawer-hint" }, tr("drawer.noPanels", "还没有子面板。")) : React4.createElement(
+    React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.panels", "子面板")),
+    scene.panels.length === 0 ? React5.createElement("p", { className: "dshwb-drawer-hint" }, tr("drawer.noPanels", "还没有子面板。")) : React5.createElement(
       "ul",
       { className: "dshwb-panel-list" },
       scene.panels.map(
-        (panel, index) => React4.createElement(
+        (panel, index) => React5.createElement(
           "li",
           {
             key: panel.id,
             className: panel.id === props.selectedPanelId ? "dshwb-panel-row dshwb-panel-row-active" : "dshwb-panel-row"
           },
-          React4.createElement(
+          React5.createElement(
             "button",
             {
               type: "button",
@@ -1019,27 +1389,27 @@ function ConfigDrawer(props) {
               title: panel.title,
               onClick: () => props.onSelectPanel(panel.id)
             },
-            React4.createElement(
+            React5.createElement(
               "span",
               { className: "dshwb-panel-ordinal" },
               String(index + 1).padStart(2, "0")
             ),
-            React4.createElement(
+            React5.createElement(
               "span",
               { className: "dshwb-panel-name" },
               panel.title.trim() === "" ? tr("panel.untitled", "未命名") : panel.title
             ),
-            React4.createElement("span", { className: "dshwb-panel-kind" }, panel.type)
+            React5.createElement("span", { className: "dshwb-panel-kind" }, panel.type)
           ),
-          confirmDeleteId === panel.id ? React4.createElement(
+          confirmDeleteId === panel.id ? React5.createElement(
             "span",
             { className: "dshwb-confirm" },
-            React4.createElement(
+            React5.createElement(
               "span",
               { className: "dshwb-confirm-text" },
               tr("drawer.deleteConfirm", "确认删除？")
             ),
-            React4.createElement(
+            React5.createElement(
               "button",
               {
                 type: "button",
@@ -1052,7 +1422,7 @@ function ConfigDrawer(props) {
               },
               "✓"
             ),
-            React4.createElement(
+            React5.createElement(
               "button",
               {
                 type: "button",
@@ -1062,10 +1432,10 @@ function ConfigDrawer(props) {
               },
               "✕"
             )
-          ) : React4.createElement(
-            React4.Fragment,
+          ) : React5.createElement(
+            React5.Fragment,
             null,
-            React4.createElement(
+            React5.createElement(
               "button",
               {
                 type: "button",
@@ -1076,7 +1446,7 @@ function ConfigDrawer(props) {
               },
               "↑"
             ),
-            React4.createElement(
+            React5.createElement(
               "button",
               {
                 type: "button",
@@ -1087,7 +1457,7 @@ function ConfigDrawer(props) {
               },
               "↓"
             ),
-            React4.createElement(
+            React5.createElement(
               "button",
               {
                 type: "button",
@@ -1101,10 +1471,10 @@ function ConfigDrawer(props) {
         )
       )
     ),
-    React4.createElement(
+    React5.createElement(
       "div",
       { className: "dshwb-add-row" },
-      React4.createElement(
+      React5.createElement(
         "select",
         {
           className: "dshwb-input",
@@ -1113,10 +1483,10 @@ function ConfigDrawer(props) {
           onChange: (event) => setAddType(event.target.value)
         },
         PANEL_TYPES.map(
-          (type) => React4.createElement("option", { key: type, value: type }, panelTypeLabel(tr, type))
+          (type) => React5.createElement("option", { key: type, value: type }, panelTypeLabel(tr, type))
         )
       ),
-      React4.createElement(
+      React5.createElement(
         "button",
         {
           type: "button",
@@ -1127,45 +1497,45 @@ function ConfigDrawer(props) {
       )
     )
   );
-  const typeOptions = React4.useMemo(() => {
+  const typeOptions = React5.useMemo(() => {
     const known = new Set(PANEL_TYPES);
     const options = [...PANEL_TYPES];
     if (selected !== void 0 && !known.has(selected.type)) options.push(selected.type);
     return options;
   }, [selected]);
-  const selectedSection = React4.createElement(
+  const selectedSection = React5.createElement(
     "section",
     { className: "dshwb-drawer-section" },
-    React4.createElement(
+    React5.createElement(
       "h3",
       { className: "dshwb-drawer-section-title" },
       tr("drawer.panelProps", "子面板属性")
     ),
-    selected === void 0 ? React4.createElement(
+    selected === void 0 ? React5.createElement(
       "p",
       { className: "dshwb-drawer-hint" },
       tr("drawer.selectPanelHint", "在下面的列表里选择一个子面板来编辑它的属性。")
-    ) : React4.createElement(
-      React4.Fragment,
+    ) : React5.createElement(
+      React5.Fragment,
       null,
-      React4.createElement(TextField, {
+      React5.createElement(TextField, {
         id: "dshwb-panel-title",
         label: tr("panel.title", "标题"),
         value: selected.title,
         placeholder: tr("panel.titlePlaceholder", "显示在子面板顶部的标题"),
         onValue: (value) => props.onPanelChange(selected.id, { title: value })
       }),
-      React4.createElement(TextField, {
+      React5.createElement(TextField, {
         id: "dshwb-panel-sub",
         label: tr("panel.sub", "副标题"),
         value: selected.sub ?? "",
         placeholder: tr("panel.subPlaceholder", "可选的一行补充说明"),
         onValue: (value) => props.onPanelChange(selected.id, { sub: value })
       }),
-      React4.createElement(
+      React5.createElement(
         Field,
         { label: tr("panel.type", "类型"), htmlFor: "dshwb-panel-type" },
-        React4.createElement(
+        React5.createElement(
           "select",
           {
             id: "dshwb-panel-type",
@@ -1174,7 +1544,7 @@ function ConfigDrawer(props) {
             onChange: (event) => props.onPanelTypeChange(selected.id, event.target.value)
           },
           typeOptions.map(
-            (type) => React4.createElement(
+            (type) => React5.createElement(
               "option",
               { key: type, value: type },
               panelTypeLabel(tr, type)
@@ -1182,27 +1552,27 @@ function ConfigDrawer(props) {
           )
         )
       ),
-      React4.createElement(
+      React5.createElement(
         Field,
         { label: tr("panel.layout", "位置与跨度"), hint: tr("panel.layoutHint", "留空表示自动排列；坐标从 1 开始。") },
-        React4.createElement(
+        React5.createElement(
           "div",
           { className: "dshwb-grid2" },
-          React4.createElement(NumberField, {
+          React5.createElement(NumberField, {
             id: "dshwb-panel-col",
             label: tr("panel.col", "起始列"),
             value: selected.col,
             min: 1,
             onValue: (value) => props.onPanelChange(selected.id, { col: value })
           }),
-          React4.createElement(NumberField, {
+          React5.createElement(NumberField, {
             id: "dshwb-panel-row",
             label: tr("panel.row", "起始行"),
             value: selected.row,
             min: 1,
             onValue: (value) => props.onPanelChange(selected.id, { row: value })
           }),
-          React4.createElement(NumberField, {
+          React5.createElement(NumberField, {
             id: "dshwb-panel-w",
             label: tr("panel.w", "跨列"),
             value: selected.w,
@@ -1210,7 +1580,7 @@ function ConfigDrawer(props) {
             max: 12,
             onValue: (value) => props.onPanelChange(selected.id, { w: value })
           }),
-          React4.createElement(NumberField, {
+          React5.createElement(NumberField, {
             id: "dshwb-panel-h",
             label: tr("panel.h", "跨行"),
             value: selected.h,
@@ -1219,22 +1589,23 @@ function ConfigDrawer(props) {
           })
         )
       ),
-      React4.createElement(TypeFields, {
+      React5.createElement(TypeFields, {
         panel: selected,
         tr,
+        shell: props.shell,
         onValue: (patch) => props.onPanelChange(selected.id, patch)
       })
     )
   );
-  return React4.createElement(
+  return React5.createElement(
     "aside",
     { className: "dshwb-drawer", "aria-label": tr("drawer.title", "配置") },
-    React4.createElement("style", { dangerouslySetInnerHTML: { __html: DRAWER_CSS } }),
-    React4.createElement(
+    React5.createElement("style", { dangerouslySetInnerHTML: { __html: DRAWER_CSS } }),
+    React5.createElement(
       "header",
       { className: "dshwb-drawer-head" },
-      React4.createElement("h2", { className: "dshwb-drawer-title" }, tr("drawer.title", "配置")),
-      React4.createElement(
+      React5.createElement("h2", { className: "dshwb-drawer-title" }, tr("drawer.title", "配置")),
+      React5.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: props.onClose },
         tr("drawer.close", "收起")
@@ -1247,7 +1618,7 @@ function ConfigDrawer(props) {
 }
 
 // src/client/workbench-grid.ts
-var React7 = __toESM(require("react"), 1);
+var React9 = __toESM(require("react"), 1);
 
 // src/shared/workbench/grid.ts
 function panelGridPlacement(panel) {
@@ -1277,8 +1648,131 @@ function panelBoundsIssues(panel, cols) {
   return [];
 }
 
+// src/client/renderers/harness.ts
+var React6 = __toESM(require("react"), 1);
+var HARNESS_CSS = `
+.dshwb-harness{display:flex;flex-direction:column;gap:8px;min-height:0}
+.dshwb-harness-card{display:flex;flex-direction:column;gap:5px;box-sizing:border-box;width:100%;padding:10px 12px;border:1px solid rgba(255,255,255,.14);border-radius:10px;background:rgba(255,255,255,.05);color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.dshwb-harness-card:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.22)}
+.dshwb-harness-card:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dshwb-harness-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-status{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:10.5px;line-height:1.7;white-space:nowrap}
+.dshwb-harness-running{background:rgba(86,160,255,.2);color:#a9ceff}
+.dshwb-harness-idle{background:rgba(255,255,255,.08);color:rgba(226,234,248,.62)}
+.dshwb-harness-unknown{background:rgba(255,196,84,.16);color:#ffd88e}
+.dshwb-harness-id{margin:0;overflow:hidden;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
+.dshwb-harness-reason{margin:0;color:rgba(226,234,248,.72);font-size:12px;line-height:1.6}
+.dshwb-harness-error{margin:0;color:#ffb4a8;font-size:11.5px;line-height:1.6}
+.dshwb-harness-degraded{padding:10px 12px;border:1px dashed rgba(255,196,84,.35);border-radius:10px;background:rgba(255,196,84,.06)}
+`;
+function displayTitle(tr, title, sessionId) {
+  if (title !== "") return title;
+  return sessionId !== "" ? sessionId : tr("panel.harness.untitled", "未命名会话");
+}
+function HarnessPanel(props) {
+  const { panel, tr, shell } = props;
+  const binding = harnessBinding(panel);
+  const snapshot = useSessionSnapshot(shell);
+  const view = harnessBadgeView(binding, snapshot);
+  const [openFailed, setOpenFailed] = React6.useState(false);
+  const boundId = view.kind === "bound" ? view.sessionId : "";
+  React6.useEffect(() => {
+    setOpenFailed(false);
+  }, [boundId]);
+  const open = () => {
+    if (view.kind !== "bound") return;
+    setOpenFailed(false);
+    if (shell === void 0 || !shell.openSession(view.sessionId)) setOpenFailed(true);
+  };
+  let body;
+  if (view.kind === "bound") {
+    body = React6.createElement(
+      "button",
+      {
+        type: "button",
+        className: "dshwb-harness-card",
+        title: tr("panel.harness.openHint", "点击打开这条会话"),
+        onClick: open
+      },
+      React6.createElement(
+        "span",
+        { className: "dshwb-harness-head" },
+        React6.createElement(
+          "span",
+          { className: "dshwb-harness-title" },
+          displayTitle(tr, view.title, view.sessionId)
+        ),
+        React6.createElement(
+          "span",
+          {
+            className: view.running ? "dshwb-harness-status dshwb-harness-running" : "dshwb-harness-status dshwb-harness-idle"
+          },
+          view.running ? tr("panel.harness.running", "运行中") : tr("panel.harness.idle", "空闲")
+        )
+      ),
+      React6.createElement("span", { className: "dshwb-harness-id" }, view.sessionId),
+      React6.createElement(
+        "span",
+        { className: "dshwb-harness-hint" },
+        tr("panel.harness.openHint", "点击打开这条会话")
+      )
+    );
+  } else if (view.kind === "unbound") {
+    body = React6.createElement(
+      "p",
+      { className: "dshwb-harness-hint" },
+      tr("panel.harness.unbound", "还没有绑定会话：在配置里选一条会话。")
+    );
+  } else if (view.kind === "missing") {
+    body = React6.createElement(
+      React6.Fragment,
+      null,
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-title" },
+        displayTitle(tr, view.title, view.sessionId)
+      ),
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-reason" },
+        tr("panel.harness.missing", "绑定的会话不存在或不可读；在配置里重新选一条。")
+      ),
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId)
+    );
+  } else {
+    body = React6.createElement(
+      React6.Fragment,
+      null,
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-title" },
+        displayTitle(tr, view.title, view.sessionId)
+      ),
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-reason" },
+        tr("panel.harness.unavailable", "读不到外壳的会话列表，暂时无法显示会话状态。")
+      ),
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId)
+    );
+  }
+  return React6.createElement(
+    "div",
+    { className: "dshwb-harness" },
+    React6.createElement("style", { dangerouslySetInnerHTML: { __html: HARNESS_CSS } }),
+    view.kind === "bound" || view.kind === "unbound" ? body : React6.createElement("div", { className: "dshwb-harness-degraded" }, body),
+    openFailed && React6.createElement(
+      "p",
+      { className: "dshwb-harness-error", role: "alert" },
+      tr("panel.harness.openFailed", "打不开这条会话：外壳没有提供打开能力。")
+    )
+  );
+}
+
 // src/client/renderers/reserved.ts
-var React5 = __toESM(require("react"), 1);
+var React7 = __toESM(require("react"), 1);
 function textField(panel, key) {
   const value = panel[key];
   return typeof value === "string" && value.trim() !== "" ? value : null;
@@ -1286,27 +1780,28 @@ function textField(panel, key) {
 function ReservedPanel(props) {
   const { panel, tr } = props;
   const text = textField(panel, "text") ?? tr("panel.reserved.placeholder", "占位面板，内容待补充");
-  return React5.createElement(
+  return React7.createElement(
     "div",
     { className: "dshwb-reserved" },
-    React5.createElement("p", { className: "dshwb-reserved-text" }, text),
-    React5.createElement("p", { className: "dshwb-reserved-type" }, `type: ${panel.type}`)
+    React7.createElement("p", { className: "dshwb-reserved-text" }, text),
+    React7.createElement("p", { className: "dshwb-reserved-type" }, `type: ${panel.type}`)
   );
 }
 
 // src/client/renderers/index.ts
 var PANEL_RENDERERS = {
-  reserved: ReservedPanel
+  reserved: ReservedPanel,
+  harness: HarnessPanel
 };
 function panelRenderer(type) {
   return Object.hasOwn(PANEL_RENDERERS, type) ? PANEL_RENDERERS[type] : void 0;
 }
 
 // src/client/renderers/unknown.ts
-var React6 = __toESM(require("react"), 1);
+var React8 = __toESM(require("react"), 1);
 function UnknownPanel(props) {
   const { panel, tr } = props;
-  return React6.createElement(
+  return React8.createElement(
     "p",
     { className: "dshwb-unknown" },
     `${tr("panel.unknown", "未知面板类型")}: ${panel.type}`
@@ -1334,48 +1829,49 @@ var GRID_CSS = `
 .dshwb-grid-empty{margin:0;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.7}
 `;
 function WorkbenchGrid(props) {
-  const { scene, tr } = props;
+  const { scene, tr, shell } = props;
   const cols = scene.cols ?? DEFAULT_COLS;
-  return React7.createElement(
+  return React9.createElement(
     "div",
     { className: "dshwb-grid-wrap" },
-    React7.createElement("style", { dangerouslySetInnerHTML: { __html: GRID_CSS } }),
-    scene.panels.length === 0 ? React7.createElement(
+    React9.createElement("style", { dangerouslySetInnerHTML: { __html: GRID_CSS } }),
+    scene.panels.length === 0 ? React9.createElement(
       "p",
       { className: "dshwb-grid-empty" },
       tr(
         "panel.empty",
         "这个工作台还没有子面板。在工作台 JSON 的 panels 里加一个，再点「刷新」。"
       )
-    ) : React7.createElement(
+    ) : React9.createElement(
       "div",
       {
         className: "dshwb-grid",
         style: { gridTemplateColumns: gridTemplateColumns(cols) }
       },
       scene.panels.map(
-        (panel, index) => React7.createElement(PanelFrame, {
+        (panel, index) => React9.createElement(PanelFrame, {
           key: panel.id,
           panel,
           index,
           cols,
-          tr
+          tr,
+          shell
         })
       )
     )
   );
 }
 function PanelFrame(props) {
-  const { panel, index, cols, tr } = props;
+  const { panel, index, cols, tr, shell } = props;
   const issues = panelBoundsIssues(panel, cols);
   const issuesText = issues.join("；");
   const ordinal = panelIndexLabel(index + 1);
-  React7.useEffect(() => {
+  React9.useEffect(() => {
     if (issuesText === "") return;
     console.warn(`[workbench] 子面板 ${ordinal}「${panel.title}」坐标越界：${issuesText}`);
   }, [issuesText, ordinal, panel.title]);
   const Renderer = panelRenderer(panel.type);
-  return React7.createElement(
+  return React9.createElement(
     "article",
     {
       className: "dshwb-panel",
@@ -1383,31 +1879,31 @@ function PanelFrame(props) {
       "data-panel-id": panel.id,
       "data-panel-type": panel.type
     },
-    React7.createElement(
+    React9.createElement(
       "header",
       { className: "dshwb-panel-head" },
-      React7.createElement("span", { className: "dshwb-panel-index" }, ordinal),
-      React7.createElement(
+      React9.createElement("span", { className: "dshwb-panel-index" }, ordinal),
+      React9.createElement(
         "div",
         { className: "dshwb-panel-heading" },
-        React7.createElement("h3", { className: "dshwb-panel-title", title: panel.title }, panel.title),
-        panel.sub !== void 0 && panel.sub.trim() !== "" && React7.createElement("p", { className: "dshwb-panel-sub", title: panel.sub }, panel.sub)
+        React9.createElement("h3", { className: "dshwb-panel-title", title: panel.title }, panel.title),
+        panel.sub !== void 0 && panel.sub.trim() !== "" && React9.createElement("p", { className: "dshwb-panel-sub", title: panel.sub }, panel.sub)
       ),
-      React7.createElement(
+      React9.createElement(
         "div",
         { className: "dshwb-panel-actions" },
-        issuesText !== "" && React7.createElement(
+        issuesText !== "" && React9.createElement(
           "span",
           { className: "dshwb-panel-warn", title: issuesText },
           tr("panel.outOfBounds", "坐标越界")
         ),
-        React7.createElement("span", { className: "dshwb-panel-type" }, panel.type)
+        React9.createElement("span", { className: "dshwb-panel-type" }, panel.type)
       )
     ),
-    React7.createElement(
+    React9.createElement(
       "div",
       { className: "dshwb-panel-body" },
-      Renderer === void 0 ? React7.createElement(UnknownPanel, { panel, tr }) : React7.createElement(Renderer, { panel, tr })
+      Renderer === void 0 ? React9.createElement(UnknownPanel, { panel, tr }) : React9.createElement(Renderer, { panel, tr, shell })
     )
   );
 }
@@ -1454,32 +1950,32 @@ function readableError(error) {
 }
 function SceneEditor(props) {
   const { tr, client } = props;
-  const [scene, setScene] = React8.useState(props.scene);
-  const [lastSaved, setLastSaved] = React8.useState(props.scene);
-  const [saveError, setSaveError] = React8.useState(null);
-  const [saving, setSaving] = React8.useState(false);
-  const [drawerOpen, setDrawerOpen] = React8.useState(props.defaultDrawerOpen === true);
-  const [confirmingDelete, setConfirmingDelete] = React8.useState(false);
-  const [deleting, setDeleting] = React8.useState(false);
-  const [actionError, setActionError] = React8.useState(null);
-  const [selectedPanelId, setSelectedPanelId] = React8.useState(
+  const [scene, setScene] = React10.useState(props.scene);
+  const [lastSaved, setLastSaved] = React10.useState(props.scene);
+  const [saveError, setSaveError] = React10.useState(null);
+  const [saving, setSaving] = React10.useState(false);
+  const [drawerOpen, setDrawerOpen] = React10.useState(props.defaultDrawerOpen === true);
+  const [confirmingDelete, setConfirmingDelete] = React10.useState(false);
+  const [deleting, setDeleting] = React10.useState(false);
+  const [actionError, setActionError] = React10.useState(null);
+  const [selectedPanelId, setSelectedPanelId] = React10.useState(
     props.scene.panels[0]?.id ?? null
   );
-  const sceneRef = React8.useRef(scene);
+  const sceneRef = React10.useRef(scene);
   sceneRef.current = scene;
-  const lastSavedRef = React8.useRef(lastSaved);
+  const lastSavedRef = React10.useRef(lastSaved);
   lastSavedRef.current = lastSaved;
-  const retrySceneRef = React8.useRef(null);
-  const timerRef = React8.useRef(null);
-  const seqRef = React8.useRef(0);
-  const deletingRef = React8.useRef(false);
-  const clearTimer = React8.useCallback(() => {
+  const retrySceneRef = React10.useRef(null);
+  const timerRef = React10.useRef(null);
+  const seqRef = React10.useRef(0);
+  const deletingRef = React10.useRef(false);
+  const clearTimer = React10.useCallback(() => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   }, []);
-  const flush = React8.useCallback(async () => {
+  const flush = React10.useCallback(async () => {
     clearTimer();
     const target = sceneRef.current;
     if (target === lastSavedRef.current) return true;
@@ -1509,7 +2005,7 @@ function SceneEditor(props) {
       if (seq === seqRef.current) setSaving(false);
     }
   }, [clearTimer, client]);
-  React8.useEffect(() => {
+  React10.useEffect(() => {
     if (scene === lastSaved) return;
     clearTimer();
     timerRef.current = window.setTimeout(() => {
@@ -1518,7 +2014,7 @@ function SceneEditor(props) {
     }, AUTOSAVE_DELAY_MS);
     return clearTimer;
   }, [scene, lastSaved, clearTimer, flush]);
-  React8.useEffect(
+  React10.useEffect(
     () => () => {
       clearTimer();
       if (deletingRef.current) return;
@@ -1529,8 +2025,8 @@ function SceneEditor(props) {
     },
     [clearTimer, client]
   );
-  const propSceneRef = React8.useRef(props.scene);
-  React8.useEffect(() => {
+  const propSceneRef = React10.useRef(props.scene);
+  React10.useEffect(() => {
     const next = props.scene;
     if (next === propSceneRef.current) return;
     propSceneRef.current = next;
@@ -1541,7 +2037,7 @@ function SceneEditor(props) {
     setLastSaved(next);
     setSaveError(null);
   }, [props.scene]);
-  React8.useEffect(() => {
+  React10.useEffect(() => {
     if (selectedPanelId !== null && scene.panels.some((panel) => panel.id === selectedPanelId)) {
       return;
     }
@@ -1554,7 +2050,10 @@ function SceneEditor(props) {
   };
   const handleReload = () => {
     void flush().then((saved) => {
-      if (saved) props.onReload();
+      if (saved) {
+        props.shell?.refresh();
+        props.onReload();
+      }
     });
   };
   const switchTo = (id) => {
@@ -1619,19 +2118,19 @@ function SceneEditor(props) {
   };
   const cols = scene.cols ?? DEFAULT_COLS;
   const status = scene === lastSaved ? tr("save.saved", "已保存") : saving ? tr("save.saving", "保存中…") : tr("save.pending", "待保存");
-  return React8.createElement(
+  return React10.createElement(
     "div",
     { className: "dshwb-scene" },
-    React8.createElement("style", { dangerouslySetInnerHTML: { __html: SCENE_CSS } }),
-    React8.createElement(
+    React10.createElement("style", { dangerouslySetInnerHTML: { __html: SCENE_CSS } }),
+    React10.createElement(
       "div",
       { className: "dshwb-scene-bar" },
-      React8.createElement(
+      React10.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: handleBack },
         `← ${tr("scene.back", "返回列表")}`
       ),
-      React8.createElement(
+      React10.createElement(
         "select",
         {
           className: "dshwb-switch",
@@ -1642,58 +2141,58 @@ function SceneEditor(props) {
           onChange: (event) => switchTo(event.target.value)
         },
         props.entries.map(
-          (entry) => React8.createElement(
+          (entry) => React10.createElement(
             "option",
             { key: entry.id, value: entry.id },
             workbenchOptionLabel(tr, entry)
           )
         )
       ),
-      React8.createElement(
+      React10.createElement(
         "div",
         { className: "dshwb-scene-heading" },
-        React8.createElement(
+        React10.createElement(
           "h2",
           { className: "dshwb-scene-name", title: scene.name },
           scene.name.trim() === "" ? scene.id : scene.name
         ),
-        React8.createElement("span", { className: "dshwb-scene-id", title: scene.id }, scene.id)
+        React10.createElement("span", { className: "dshwb-scene-id", title: scene.id }, scene.id)
       ),
-      React8.createElement(
+      React10.createElement(
         "span",
         { className: "dshwb-scene-meta" },
         `${cols} ${tr("scene.colsUnit", "列")} · ${scene.panels.length} ${tr("scene.panelsUnit", "个子面板")}`
       ),
-      saveError !== null && React8.createElement(
+      saveError !== null && React10.createElement(
         "span",
         { className: "dshwb-save-error", role: "alert", title: saveError },
         `${tr("save.errorPrefix", "保存失败：")}${saveError}`
       ),
-      saveError !== null && React8.createElement(
+      saveError !== null && React10.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: retrySave },
         tr("save.retry", "重试")
       ),
-      saveError === null && React8.createElement("span", { className: "dshwb-save-status" }, status),
-      actionError !== null && React8.createElement(
+      saveError === null && React10.createElement("span", { className: "dshwb-save-status" }, status),
+      actionError !== null && React10.createElement(
         "span",
         { className: "dshwb-save-error", role: "alert", title: actionError },
         actionError
       ),
-      React8.createElement(
+      React10.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: handleReload },
         tr("scene.refresh", "刷新")
       ),
-      confirmingDelete ? React8.createElement(
-        React8.Fragment,
+      confirmingDelete ? React10.createElement(
+        React10.Fragment,
         null,
-        React8.createElement(
+        React10.createElement(
           "span",
           { className: "dshwb-confirm-text" },
           tr("bar.deleteConfirm", "删除这个工作台？目录与索引登记都会移除，无法撤销。")
         ),
-        React8.createElement(
+        React10.createElement(
           "button",
           {
             type: "button",
@@ -1703,7 +2202,7 @@ function SceneEditor(props) {
           },
           deleting ? tr("bar.deleting", "删除中…") : tr("bar.confirmDelete", "确认删除")
         ),
-        React8.createElement(
+        React10.createElement(
           "button",
           {
             type: "button",
@@ -1713,7 +2212,7 @@ function SceneEditor(props) {
           },
           tr("bar.cancelDelete", "取消")
         )
-      ) : React8.createElement(
+      ) : React10.createElement(
         "button",
         {
           type: "button",
@@ -1725,12 +2224,12 @@ function SceneEditor(props) {
         },
         tr("bar.delete", "删除工作台")
       ),
-      React8.createElement(
+      React10.createElement(
         "button",
         { type: "button", className: "dshwb-primary", onClick: props.onCreateWorkbench },
         tr("bar.new", "新建工作台")
       ),
-      React8.createElement(
+      React10.createElement(
         "button",
         {
           type: "button",
@@ -1740,15 +2239,16 @@ function SceneEditor(props) {
         drawerOpen ? tr("drawer.hide", "收起配置") : tr("drawer.show", "配置")
       )
     ),
-    scene.description !== void 0 && scene.description.trim() !== "" && React8.createElement("p", { className: "dshwb-scene-desc" }, scene.description),
-    React8.createElement(
+    scene.description !== void 0 && scene.description.trim() !== "" && React10.createElement("p", { className: "dshwb-scene-desc" }, scene.description),
+    React10.createElement(
       "div",
       { className: "dshwb-scene-body" },
-      React8.createElement(WorkbenchGrid, { scene, tr }),
-      drawerOpen && React8.createElement(ConfigDrawer, {
+      React10.createElement(WorkbenchGrid, { scene, tr, shell: props.shell }),
+      drawerOpen && React10.createElement(ConfigDrawer, {
         scene,
         selectedPanelId,
         tr,
+        shell: props.shell,
         onClose: () => setDrawer(false),
         onWorkbenchChange,
         onSelectPanel: setSelectedPanelId,
@@ -1874,7 +2374,7 @@ function readableError2(error) {
 }
 function HelloPanel(props) {
   const translate = props.t;
-  const tr = React9.useCallback(
+  const tr = React11.useCallback(
     (key, fallback) => {
       if (typeof translate !== "function") return fallback;
       const value = translate(key);
@@ -1883,20 +2383,20 @@ function HelloPanel(props) {
     [translate]
   );
   const rpc = props.rpc;
-  const [state, setState] = React9.useState({ phase: "loading" });
-  const [attempt, setAttempt] = React9.useState(0);
-  const [editingRoot, setEditingRoot] = React9.useState(false);
-  const [pathDraft, setPathDraft] = React9.useState("");
-  const [savingRoot, setSavingRoot] = React9.useState(false);
-  const [saveError, setSaveError] = React9.useState(null);
-  const [view, setView] = React9.useState({ kind: "list" });
-  const [creating, setCreating] = React9.useState(false);
-  const [drawerOpen, setDrawerOpen] = React9.useState(false);
-  const storage = React9.useMemo(() => browserStorage(), []);
-  const viewRef = React9.useRef(view);
+  const [state, setState] = React11.useState({ phase: "loading" });
+  const [attempt, setAttempt] = React11.useState(0);
+  const [editingRoot, setEditingRoot] = React11.useState(false);
+  const [pathDraft, setPathDraft] = React11.useState("");
+  const [savingRoot, setSavingRoot] = React11.useState(false);
+  const [saveError, setSaveError] = React11.useState(null);
+  const [view, setView] = React11.useState({ kind: "list" });
+  const [creating, setCreating] = React11.useState(false);
+  const [drawerOpen, setDrawerOpen] = React11.useState(false);
+  const storage = React11.useMemo(() => browserStorage(), []);
+  const viewRef = React11.useRef(view);
   viewRef.current = view;
-  const restoredRef = React9.useRef(false);
-  const takenIds = React9.useMemo(
+  const restoredRef = React11.useRef(false);
+  const takenIds = React11.useMemo(
     () => state.phase === "ready" ? state.entries.map((entry) => entry.id) : [],
     [state]
   );
@@ -1914,7 +2414,7 @@ function HelloPanel(props) {
     setDrawerOpen(true);
     setView({ kind: "scene", scene: saved, configure: true });
   };
-  const load = React9.useCallback(async () => {
+  const load = React11.useCallback(async () => {
     if (rpc === void 0) {
       setState({ phase: "error", message: tr("error.connection", "连接服务不可用，请稍后重试") });
       return;
@@ -1933,7 +2433,7 @@ function HelloPanel(props) {
       setState({ phase: "error", message: readableError2(error) });
     }
   }, [rpc, tr]);
-  React9.useEffect(() => {
+  React11.useEffect(() => {
     void load();
   }, [load, attempt]);
   const openWorkbench = async (id) => {
@@ -1979,7 +2479,7 @@ function HelloPanel(props) {
       setState({ phase: "error", message: readableError2(error) });
     }
   };
-  React9.useEffect(() => {
+  React11.useEffect(() => {
     if (restoredRef.current || state.phase !== "ready") return;
     restoredRef.current = true;
     const last = readLastWorkbench(storage);
@@ -2033,21 +2533,21 @@ function HelloPanel(props) {
     }
   };
   const renderRootForm = () => {
-    return React9.createElement(
+    return React11.createElement(
       "div",
       { className: "dshwb-card" },
-      React9.createElement("h2", { className: "dshwb-card-title" }, tr("root.title", "设置工作台根目录")),
-      React9.createElement(
+      React11.createElement("h2", { className: "dshwb-card-title" }, tr("root.title", "设置工作台根目录")),
+      React11.createElement(
         "p",
         { className: "dshwb-card-sub" },
         tr("root.sub", "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。")
       ),
-      React9.createElement(
+      React11.createElement(
         "label",
         { className: "dshwb-label", htmlFor: "dshwb-root-input" },
         tr("root.label", "根目录路径")
       ),
-      React9.createElement("input", {
+      React11.createElement("input", {
         id: "dshwb-root-input",
         className: "dshwb-input",
         type: "text",
@@ -2063,11 +2563,11 @@ function HelloPanel(props) {
           void saveRoot();
         }
       }),
-      saveError !== null && React9.createElement("p", { className: "dshwb-error", role: "alert" }, saveError),
-      React9.createElement(
+      saveError !== null && React11.createElement("p", { className: "dshwb-error", role: "alert" }, saveError),
+      React11.createElement(
         "div",
         { className: "dshwb-actions" },
-        editingRoot && React9.createElement(
+        editingRoot && React11.createElement(
           "button",
           {
             type: "button",
@@ -2080,7 +2580,7 @@ function HelloPanel(props) {
           },
           tr("root.cancel", "取消")
         ),
-        React9.createElement(
+        React11.createElement(
           "button",
           {
             type: "button",
@@ -2093,34 +2593,34 @@ function HelloPanel(props) {
       )
     );
   };
-  const renderList = (root, entries) => React9.createElement(
-    React9.Fragment,
+  const renderList = (root, entries) => React11.createElement(
+    React11.Fragment,
     null,
-    React9.createElement(
+    React11.createElement(
       "div",
       { className: "dshwb-root-bar" },
-      React9.createElement("span", { className: "dshwb-root-path", title: root }, root),
-      React9.createElement(
+      React11.createElement("span", { className: "dshwb-root-path", title: root }, root),
+      React11.createElement(
         "button",
         { type: "button", className: "dshwb-primary", onClick: openCreate },
         tr("bar.new", "新建工作台")
       ),
-      React9.createElement(
+      React11.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: () => setAttempt((value) => value + 1) },
         tr("list.refresh", "刷新")
       ),
-      React9.createElement(
+      React11.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: () => startEditing(root) },
         tr("root.change", "更换根目录")
       )
     ),
-    entries.length === 0 ? React9.createElement(
+    entries.length === 0 ? React11.createElement(
       "div",
       { className: "dshwb-card" },
-      React9.createElement("h2", { className: "dshwb-card-title" }, tr("list.empty.title", "还没有工作台")),
-      React9.createElement(
+      React11.createElement("h2", { className: "dshwb-card-title" }, tr("list.empty.title", "还没有工作台")),
+      React11.createElement(
         "p",
         { className: "dshwb-card-sub" },
         tr(
@@ -2128,23 +2628,23 @@ function HelloPanel(props) {
           "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或点「新建工作台」创建。"
         )
       ),
-      React9.createElement(
+      React11.createElement(
         "div",
         { className: "dshwb-actions" },
-        React9.createElement(
+        React11.createElement(
           "button",
           { type: "button", className: "dshwb-primary", onClick: openCreate },
           tr("list.empty.action", "新建工作台")
         )
       )
-    ) : React9.createElement(
+    ) : React11.createElement(
       "ul",
       { className: "dshwb-list" },
       entries.map(
-        (entry) => React9.createElement(
+        (entry) => React11.createElement(
           "li",
           { key: entry.id },
-          React9.createElement(
+          React11.createElement(
             "button",
             {
               type: "button",
@@ -2152,20 +2652,20 @@ function HelloPanel(props) {
               title: entry.name,
               onClick: () => void openWorkbench(entry.id)
             },
-            React9.createElement(
+            React11.createElement(
               "span",
               { className: "dshwb-item-main" },
-              React9.createElement(
+              React11.createElement(
                 "span",
                 { className: "dshwb-item-headline" },
-                React9.createElement("span", { className: "dshwb-item-name" }, entry.name),
-                entry.status !== "ok" && React9.createElement(
+                React11.createElement("span", { className: "dshwb-item-name" }, entry.name),
+                entry.status !== "ok" && React11.createElement(
                   "span",
                   { className: `dshwb-badge dshwb-badge-${entry.status}` },
                   tr(WORKBENCH_STATUS_LABEL_KEYS[entry.status], entry.status)
                 )
               ),
-              entry.status !== "ok" && React9.createElement(
+              entry.status !== "ok" && React11.createElement(
                 "span",
                 { className: "dshwb-item-hint" },
                 tr(WORKBENCH_STATUS_HINT_KEYS[entry.status], entry.status)
@@ -2173,8 +2673,8 @@ function HelloPanel(props) {
             ),
             // Missing/corrupt entries have no readable name, so the Host
             // reports the id as the name: never show the id twice.
-            entry.name !== entry.id && React9.createElement("span", { className: "dshwb-item-id" }, entry.id),
-            React9.createElement("span", { className: "dshwb-item-chevron", "aria-hidden": true }, "›")
+            entry.name !== entry.id && React11.createElement("span", { className: "dshwb-item-id" }, entry.id),
+            React11.createElement("span", { className: "dshwb-item-chevron", "aria-hidden": true }, "›")
           )
         )
       )
@@ -2183,14 +2683,14 @@ function HelloPanel(props) {
   const renderSceneEditor = (scene) => {
     const client = rpc;
     if (client === void 0) {
-      return React9.createElement(
+      return React11.createElement(
         "div",
         { className: "dshwb-card" },
-        React9.createElement("p", { className: "dshwb-card-sub" }, tr("error.connection", "连接服务不可用，请稍后重试")),
-        React9.createElement(
+        React11.createElement("p", { className: "dshwb-card-sub" }, tr("error.connection", "连接服务不可用，请稍后重试")),
+        React11.createElement(
           "div",
           { className: "dshwb-actions" },
-          React9.createElement(
+          React11.createElement(
             "button",
             { type: "button", className: "dshwb-secondary", onClick: () => void load() },
             tr("list.retry", "重试")
@@ -2198,11 +2698,12 @@ function HelloPanel(props) {
         )
       );
     }
-    return React9.createElement(SceneEditor, {
+    return React11.createElement(SceneEditor, {
       key: scene.id,
       scene,
       tr,
       client,
+      shell: props.shell,
       entries: state.phase === "ready" ? state.entries : [],
       defaultDrawerOpen: view.kind === "scene" && view.configure === true ? true : drawerOpen,
       onBack: () => void load(),
@@ -2213,20 +2714,20 @@ function HelloPanel(props) {
       onCreateWorkbench: openCreate
     });
   };
-  const renderOpenError = (id, message) => React9.createElement(
+  const renderOpenError = (id, message) => React11.createElement(
     "div",
     { className: "dshwb-card" },
-    React9.createElement("h2", { className: "dshwb-card-title" }, tr("scene.error.title", "打开工作台失败")),
-    React9.createElement("p", { className: "dshwb-card-sub" }, message),
-    React9.createElement(
+    React11.createElement("h2", { className: "dshwb-card-title" }, tr("scene.error.title", "打开工作台失败")),
+    React11.createElement("p", { className: "dshwb-card-sub" }, message),
+    React11.createElement(
       "div",
       { className: "dshwb-actions" },
-      React9.createElement(
+      React11.createElement(
         "button",
         { type: "button", className: "dshwb-secondary", onClick: () => setView({ kind: "list" }) },
         tr("scene.back", "返回列表")
       ),
-      React9.createElement(
+      React11.createElement(
         "button",
         { type: "button", className: "dshwb-primary", onClick: () => void openWorkbench(id) },
         tr("list.retry", "重试")
@@ -2236,7 +2737,7 @@ function HelloPanel(props) {
   let body;
   let sceneView = false;
   if (state.phase === "loading") {
-    body = React9.createElement("p", { className: "dshwb-loading" }, tr("list.loading", "正在读取…"));
+    body = React11.createElement("p", { className: "dshwb-loading" }, tr("list.loading", "正在读取…"));
   } else if (state.phase === "no-root") {
     body = renderRootForm();
   } else if (state.phase === "ready") {
@@ -2246,30 +2747,30 @@ function HelloPanel(props) {
       sceneView = true;
       body = renderSceneEditor(view.scene);
     } else if (view.kind === "opening") {
-      body = React9.createElement("p", { className: "dshwb-loading" }, tr("scene.opening", "正在打开…"));
+      body = React11.createElement("p", { className: "dshwb-loading" }, tr("scene.opening", "正在打开…"));
     } else if (view.kind === "open-error") {
       body = renderOpenError(view.id, view.message);
     } else {
       body = renderList(state.root, state.entries);
     }
   } else {
-    body = React9.createElement(
-      React9.Fragment,
+    body = React11.createElement(
+      React11.Fragment,
       null,
-      React9.createElement(
+      React11.createElement(
         "div",
         { className: "dshwb-card" },
-        React9.createElement("h2", { className: "dshwb-card-title" }, tr("error.title", "读取失败")),
-        React9.createElement("p", { className: "dshwb-card-sub" }, state.message),
-        React9.createElement(
+        React11.createElement("h2", { className: "dshwb-card-title" }, tr("error.title", "读取失败")),
+        React11.createElement("p", { className: "dshwb-card-sub" }, state.message),
+        React11.createElement(
           "div",
           { className: "dshwb-actions" },
-          React9.createElement(
+          React11.createElement(
             "button",
             { type: "button", className: "dshwb-secondary", onClick: () => setAttempt((value) => value + 1) },
             tr("list.retry", "重试")
           ),
-          React9.createElement(
+          React11.createElement(
             "button",
             { type: "button", className: "dshwb-secondary", onClick: () => startEditing("") },
             tr("root.change", "更换根目录")
@@ -2279,7 +2780,7 @@ function HelloPanel(props) {
       editingRoot && renderRootForm()
     );
   }
-  return React9.createElement(
+  return React11.createElement(
     "div",
     {
       style: {
@@ -2290,14 +2791,14 @@ function HelloPanel(props) {
         background: HERO_BASE
       }
     },
-    React9.createElement("style", { dangerouslySetInnerHTML: { __html: PANEL_CSS } }),
-    React9.createElement(HeroBackdrop),
-    React9.createElement(
+    React11.createElement("style", { dangerouslySetInnerHTML: { __html: PANEL_CSS } }),
+    React11.createElement(HeroBackdrop),
+    React11.createElement(
       "div",
       { className: sceneView ? "dshwb-content dshwb-content-scene" : "dshwb-content" },
-      sceneView ? body : React9.createElement("div", { className: "dshwb-stack" }, body)
+      sceneView ? body : React11.createElement("div", { className: "dshwb-stack" }, body)
     ),
-    creating && React9.createElement(CreateWorkbenchDialog, {
+    creating && React11.createElement(CreateWorkbenchDialog, {
       translate: tr,
       takenIds,
       onClose: () => setCreating(false),
@@ -2600,6 +3101,20 @@ var zh = {
   "panel.sessionIdPlaceholder": "要打开的会话",
   "panel.pinTarget": "定位目标",
   "panel.pinTargetPlaceholder": "多个用逗号分隔",
+  "panel.sessionTitleHint": "门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。",
+  "panel.sessions.label": "会话",
+  "panel.sessions.none": "未绑定（选一条会话）",
+  "panel.sessions.missing": "绑定的会话已不在外壳列表里",
+  "panel.sessions.unavailable": "读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。",
+  "panel.sessions.empty": "外壳里还没有会话，先去侧栏建一条。",
+  "panel.harness.untitled": "未命名会话",
+  "panel.harness.openHint": "点击打开这条会话",
+  "panel.harness.openFailed": "打不开这条会话：外壳没有提供打开能力。",
+  "panel.harness.unbound": "还没有绑定会话：在配置里选一条会话。",
+  "panel.harness.missing": "绑定的会话不存在或不可读；在配置里重新选一条。",
+  "panel.harness.unavailable": "读不到外壳的会话列表，暂时无法显示会话状态。",
+  "panel.harness.running": "运行中",
+  "panel.harness.idle": "空闲",
   "panel.unknownFields": "这个类型没有内置编辑器；它的未知字段会原样保存。",
   "panel.new.reserved": "占位面板",
   "panel.new.harness": "会话门牌",
@@ -2714,6 +3229,20 @@ var en = {
   "panel.sessionIdPlaceholder": "Session to open",
   "panel.pinTarget": "Pin targets",
   "panel.pinTargetPlaceholder": "Comma-separated",
+  "panel.sessionTitleHint": "The badge prefers the shell’s live title; this cached title shows when it cannot be read.",
+  "panel.sessions.label": "Session",
+  "panel.sessions.none": "Not bound (pick a session)",
+  "panel.sessions.missing": "The bound session is no longer in the shell list",
+  "panel.sessions.unavailable": "The shell session list cannot be read; type the session id manually — the badge still opens by id.",
+  "panel.sessions.empty": "The shell has no session yet; create one from the sidebar first.",
+  "panel.harness.untitled": "Untitled session",
+  "panel.harness.openHint": "Click to open this session",
+  "panel.harness.openFailed": "Could not open this session: the shell offers no open capability.",
+  "panel.harness.unbound": "No session bound yet — pick one in the settings.",
+  "panel.harness.missing": "The bound session is missing or unreadable; pick another one in the settings.",
+  "panel.harness.unavailable": "The shell session list is unreadable, so the session status cannot be shown.",
+  "panel.harness.running": "Running",
+  "panel.harness.idle": "Idle",
   "panel.unknownFields": "This type has no built-in editor; its unknown fields are saved as-is.",
   "panel.new.reserved": "Placeholder",
   "panel.new.harness": "Session badge",
@@ -2730,7 +3259,8 @@ function apply(ctx) {
   const t = ctx.locale.bind(NS);
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "workbench: dictionaries");
   const rpc = createWorkbenchClient(ctx);
-  const panel = (props) => React10.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc });
+  const shell = createSessionShell(ctx);
+  const panel = (props) => React12.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc, shell });
   ctx.slots.inject(
     "main",
     () => ctx.slots.register(

@@ -25,6 +25,7 @@ import {
   type PanelType,
 } from './workbench-draft';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
+import type { SessionShell } from './session-shell';
 import { workbenchOptionLabel } from './workbench-status';
 import { DEFAULT_COLS, type WorkbenchPanel, type WorkbenchScene } from '../shared/workbench/schema';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
@@ -53,6 +54,8 @@ export interface SceneEditorProps {
   scene: WorkbenchScene;
   tr: Translate;
   client: WorkbenchClient;
+  /** The shell session list, handed to the badge renderer and the drawer. */
+  shell?: SessionShell;
   /** Every registered workbench in index order, for the top-bar switcher. */
   entries: readonly WorkbenchListEntry[];
   /** Whether the drawer starts open (true right after creating a workbench). */
@@ -210,7 +213,12 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
 
   const handleReload = (): void => {
     void flush().then((saved) => {
-      if (saved) props.onReload();
+      if (saved) {
+        // Session titles/statuses are shell state too, so the refresh action
+        // re-reads them alongside the workbench files.
+        props.shell?.refresh();
+        props.onReload();
+      }
     });
   };
 
@@ -434,12 +442,13 @@ export function SceneEditor(props: SceneEditorProps): React.ReactElement {
     React.createElement(
       'div',
       { className: 'dshwb-scene-body' },
-      React.createElement(WorkbenchGrid, { scene, tr }),
+      React.createElement(WorkbenchGrid, { scene, tr, shell: props.shell }),
       drawerOpen &&
         React.createElement(ConfigDrawer, {
           scene,
           selectedPanelId,
           tr,
+          shell: props.shell,
           onClose: () => setDrawer(false),
           onWorkbenchChange,
           onSelectPanel: setSelectedPanelId,

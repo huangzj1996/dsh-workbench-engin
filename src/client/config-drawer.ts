@@ -10,9 +10,13 @@
 import * as React from 'react';
 
 import { useCopyToClipboard } from './clipboard';
+import { bindingPatch, harnessBinding } from './harness-binding';
+import { findSession } from './harness-view';
+import { useSessionSnapshot } from './use-session-snapshot';
 import { PANEL_TYPES, type PanelType } from './workbench-draft';
 import type { WorkbenchPanel, WorkbenchScene } from '../shared/workbench/schema';
 import { DEFAULT_COLS } from '../shared/workbench/schema';
+import type { HarnessSession, SessionShell } from './session-shell';
 import type { Translate } from './translate';
 import { normalizeWorkbenchName } from './workbench-name';
 
@@ -29,6 +33,8 @@ export interface ConfigDrawerProps {
   /** Id of the panel whose properties are shown, null when none is selected. */
   selectedPanelId: string | null;
   tr: Translate;
+  /** The shell session list, for picking what a session badge binds to. */
+  shell?: SessionShell;
   onClose: () => void;
   onWorkbenchChange: (patch: WorkbenchFieldsPatch) => void;
   onSelectPanel: (id: string) => void;
@@ -70,6 +76,10 @@ export const DRAWER_CSS = `
 .dshwb-add-row .dshwb-input{flex:1;min-width:0;color-scheme:dark}
 .dshwb-drawer select.dshwb-input{color-scheme:dark}
 .dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
+.dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
+.dshwb-session-dot-running{background:#56a0ff}
+.dshwb-session-dot-warn{background:#ffc454}
 @media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
 `;
 
@@ -98,6 +108,176 @@ function parseStringList(raw: string): string[] {
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item !== '');
+}
+
+/** Raw string read for controlled inputs: never trims while the user types. */
+function rawStringField(panel: WorkbenchPanel, key: string): string {
+  const value = panel[key];
+  return typeof value === 'string' ? value : '';
+}
+
+/** Dropdown label for one shell session. */
+function sessionOptionLabel(tr: Translate, session: HarnessSession): string {
+  const title =
+    session.title !== '' ? session.title : tr('panel.harness.untitled', '未命名会话');
+  return session.running ? `${title} · ${tr('panel.harness.running', '运行中')}` : title;
+}
+
+/**
+ * The session-badge fields: a picker over the shell's session list.
+ *
+ * Picking writes the three binding fields (`sessionId` is identity, so a stale
+ * option can never overwrite it). The cached title is editable as a fallback for
+ * when the shell cannot report one, and `pinTarget` keeps its array form. When
+ * the shell exposes no session list at all the picker degrades to manual id and
+ * title inputs rather than disappearing.
+ */
+function HarnessFields(props: {
+  panel: WorkbenchPanel;
+  tr: Translate;
+  shell?: SessionShell;
+  onValue: (patch: Partial<WorkbenchPanel>) => void;
+}): React.ReactElement {
+  const { panel, tr, shell, onValue } = props;
+  const binding = harnessBinding(panel);
+  const snapshot = useSessionSnapshot(shell);
+  const bound = findSession(snapshot, binding.sessionId);
+  const missing = snapshot.available && binding.sessionId !== '' && bound === null;
+
+  /** Dropdown choice: empty unbinds, a known session writes all three fields. */
+  const pick = (id: string): void => {
+    if (id === '') {
+      onValue({ sessionId: '', sessionTitle: '' });
+      return;
+    }
+    const session = findSession(snapshot, id);
+    if (session === null) return;
+    const patch = bindingPatch(panel, session);
+    if (patch !== null) onValue(patch);
+  };
+
+  const pinTargetField = React.createElement(TextField, {
+    id: 'dshwb-panel-pin-target',
+    label: tr('panel.pinTarget', '定位目标'),
+    value: stringArrayField(panel, 'pinTarget').join(', '),
+    placeholder: tr('panel.pinTargetPlaceholder', '多个用逗号分隔'),
+    onValue: (value: string) => onValue({ pinTarget: parseStringList(value) }),
+  });
+
+  if (!snapshot.available) {
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(
+        'p',
+        { className: 'dshwb-drawer-hint' },
+        tr(
+          'panel.sessions.unavailable',
+          '读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。',
+        ),
+      ),
+      React.createElement(TextField, {
+        id: 'dshwb-panel-session-id',
+        label: tr('panel.sessionId', '会话 id'),
+        value: rawStringField(panel, 'sessionId'),
+        placeholder: tr('panel.sessionIdPlaceholder', '要打开的会话'),
+        onValue: (value: string) => onValue({ sessionId: value }),
+      }),
+      React.createElement(TextField, {
+        id: 'dshwb-panel-session-title',
+        label: tr('panel.sessionTitle', '会话标题'),
+        value: rawStringField(panel, 'sessionTitle'),
+        placeholder: tr('panel.sessionTitlePlaceholder', '显示在门牌上的标题'),
+        onValue: (value: string) => onValue({ sessionTitle: value }),
+      }),
+      pinTargetField,
+    );
+  }
+
+  const options: React.ReactNode[] = [
+    React.createElement(
+      'option',
+      { key: '', value: '' },
+      tr('panel.sessions.none', '未绑定（选一条会话）'),
+    ),
+  ];
+  for (const session of snapshot.sessions) {
+    options.push(
+      React.createElement(
+        'option',
+        { key: session.id, value: session.id },
+        sessionOptionLabel(tr, session),
+      ),
+    );
+  }
+  if (missing) {
+    const label = binding.sessionTitle !== '' ? binding.sessionTitle : binding.sessionId;
+    options.push(
+      React.createElement(
+        'option',
+        { key: binding.sessionId, value: binding.sessionId },
+        `${label} · ${tr('panel.sessions.missing', '不可用')}`,
+      ),
+    );
+  }
+
+  const status =
+    bound !== null
+      ? React.createElement(
+          'p',
+          { className: 'dshwb-session-status' },
+          React.createElement('span', {
+            className: bound.running
+              ? 'dshwb-session-dot dshwb-session-dot-running'
+              : 'dshwb-session-dot',
+          }),
+          bound.running
+            ? tr('panel.harness.running', '运行中')
+            : tr('panel.harness.idle', '空闲'),
+        )
+      : missing
+        ? React.createElement(
+            'p',
+            { className: 'dshwb-session-status' },
+            React.createElement('span', { className: 'dshwb-session-dot dshwb-session-dot-warn' }),
+            tr('panel.sessions.missing', '绑定的会话已不在外壳列表里'),
+          )
+        : null;
+
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(
+      Field,
+      { label: tr('panel.sessions.label', '会话'), htmlFor: 'dshwb-panel-session-pick' },
+      React.createElement(
+        'select',
+        {
+          id: 'dshwb-panel-session-pick',
+          className: 'dshwb-input',
+          value: binding.sessionId,
+          onChange: (event: React.ChangeEvent<HTMLSelectElement>) => pick(event.target.value),
+        },
+        options,
+      ),
+    ),
+    status,
+    snapshot.sessions.length === 0 &&
+      React.createElement(
+        'p',
+        { className: 'dshwb-drawer-hint' },
+        tr('panel.sessions.empty', '外壳里还没有会话，先去侧栏建一条。'),
+      ),
+    React.createElement(TextField, {
+      id: 'dshwb-panel-session-title',
+      label: tr('panel.sessionTitle', '会话标题'),
+      value: rawStringField(panel, 'sessionTitle'),
+      placeholder: tr('panel.sessionTitlePlaceholder', '显示在门牌上的标题'),
+      hint: tr('panel.sessionTitleHint', '门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。'),
+      onValue: (value: string) => onValue({ sessionTitle: value }),
+    }),
+    pinTargetField,
+  );
 }
 
 /** Label + control wrapper used by every field. */
@@ -204,6 +384,7 @@ function NumberField(props: {
 function TypeFields(props: {
   panel: WorkbenchPanel;
   tr: Translate;
+  shell?: SessionShell;
   onValue: (patch: Partial<WorkbenchPanel>) => void;
 }): React.ReactElement {
   const { panel, tr, onValue } = props;
@@ -217,31 +398,12 @@ function TypeFields(props: {
     });
   }
   if (panel.type === 'harness') {
-    return React.createElement(
-      React.Fragment,
-      null,
-      React.createElement(TextField, {
-        id: 'dshwb-panel-session-title',
-        label: tr('panel.sessionTitle', '会话标题'),
-        value: stringField(panel, 'sessionTitle'),
-        placeholder: tr('panel.sessionTitlePlaceholder', '显示在门牌上的标题'),
-        onValue: (value: string) => onValue({ sessionTitle: value }),
-      }),
-      React.createElement(TextField, {
-        id: 'dshwb-panel-session-id',
-        label: tr('panel.sessionId', '会话 id'),
-        value: stringField(panel, 'sessionId'),
-        placeholder: tr('panel.sessionIdPlaceholder', '要打开的会话'),
-        onValue: (value: string) => onValue({ sessionId: value }),
-      }),
-      React.createElement(TextField, {
-        id: 'dshwb-panel-pin-target',
-        label: tr('panel.pinTarget', '定位目标'),
-        value: stringArrayField(panel, 'pinTarget').join(', '),
-        placeholder: tr('panel.pinTargetPlaceholder', '多个用逗号分隔'),
-        onValue: (value: string) => onValue({ pinTarget: parseStringList(value) }),
-      }),
-    );
+    return React.createElement(HarnessFields, {
+      panel,
+      tr,
+      shell: props.shell,
+      onValue,
+    });
   }
   return React.createElement(
     'p',
@@ -582,6 +744,7 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
           React.createElement(TypeFields, {
             panel: selected,
             tr,
+            shell: props.shell,
             onValue: (patch: Partial<WorkbenchPanel>) => props.onPanelChange(selected.id, patch),
           }),
         ),

@@ -19,6 +19,7 @@ import { CreateWorkbenchDialog } from './create-workbench-dialog';
 import { HeroBackdrop, HERO_BASE } from './hero-backdrop';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
 import { SceneEditor } from './scene-editor';
+import type { SessionShell } from './session-shell';
 import { createWorkbenchScene } from './workbench-draft';
 import {
   browserStorage,
@@ -124,6 +125,8 @@ export interface HelloPanelProps {
   t?: (key: string) => string;
   /** Host RPC client; absent only if the entry could not build one. */
   rpc?: WorkbenchClient;
+  /** The shell session list, for session-badge panels. */
+  shell?: SessionShell;
 }
 
 /** Readable message for any RPC/other failure. */
@@ -506,6 +509,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       scene,
       tr,
       client,
+      shell: props.shell,
       entries: state.phase === 'ready' ? state.entries : [],
       defaultDrawerOpen:
         view.kind === 'scene' && view.configure === true ? true : drawerOpen,

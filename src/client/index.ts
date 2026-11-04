@@ -8,6 +8,7 @@
 import * as React from 'react';
 
 import { createWorkbenchClient, type ClientRpcContext } from './rpc';
+import { createSessionShell } from './session-shell';
 import { mountHeaderButton } from './sidebar-button';
 import { HelloPanel, PANEL_ID, type HelloPanelProps } from './workbench';
 
@@ -119,6 +120,20 @@ const zh: Record<string, string> = {
   'panel.sessionIdPlaceholder': '要打开的会话',
   'panel.pinTarget': '定位目标',
   'panel.pinTargetPlaceholder': '多个用逗号分隔',
+  'panel.sessionTitleHint': '门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。',
+  'panel.sessions.label': '会话',
+  'panel.sessions.none': '未绑定（选一条会话）',
+  'panel.sessions.missing': '绑定的会话已不在外壳列表里',
+  'panel.sessions.unavailable': '读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。',
+  'panel.sessions.empty': '外壳里还没有会话，先去侧栏建一条。',
+  'panel.harness.untitled': '未命名会话',
+  'panel.harness.openHint': '点击打开这条会话',
+  'panel.harness.openFailed': '打不开这条会话：外壳没有提供打开能力。',
+  'panel.harness.unbound': '还没有绑定会话：在配置里选一条会话。',
+  'panel.harness.missing': '绑定的会话不存在或不可读；在配置里重新选一条。',
+  'panel.harness.unavailable': '读不到外壳的会话列表，暂时无法显示会话状态。',
+  'panel.harness.running': '运行中',
+  'panel.harness.idle': '空闲',
   'panel.unknownFields': '这个类型没有内置编辑器；它的未知字段会原样保存。',
   'panel.new.reserved': '占位面板',
   'panel.new.harness': '会话门牌',
@@ -235,6 +250,20 @@ const en: Record<string, string> = {
   'panel.sessionIdPlaceholder': 'Session to open',
   'panel.pinTarget': 'Pin targets',
   'panel.pinTargetPlaceholder': 'Comma-separated',
+  'panel.sessionTitleHint': 'The badge prefers the shell’s live title; this cached title shows when it cannot be read.',
+  'panel.sessions.label': 'Session',
+  'panel.sessions.none': 'Not bound (pick a session)',
+  'panel.sessions.missing': 'The bound session is no longer in the shell list',
+  'panel.sessions.unavailable': 'The shell session list cannot be read; type the session id manually — the badge still opens by id.',
+  'panel.sessions.empty': 'The shell has no session yet; create one from the sidebar first.',
+  'panel.harness.untitled': 'Untitled session',
+  'panel.harness.openHint': 'Click to open this session',
+  'panel.harness.openFailed': 'Could not open this session: the shell offers no open capability.',
+  'panel.harness.unbound': 'No session bound yet — pick one in the settings.',
+  'panel.harness.missing': 'The bound session is missing or unreadable; pick another one in the settings.',
+  'panel.harness.unavailable': 'The shell session list is unreadable, so the session status cannot be shown.',
+  'panel.harness.running': 'Running',
+  'panel.harness.idle': 'Idle',
   'panel.unknownFields': 'This type has no built-in editor; its unknown fields are saved as-is.',
   'panel.new.reserved': 'Placeholder',
   'panel.new.harness': 'Session badge',
@@ -278,8 +307,11 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'workbench: dictionaries');
 
   const rpc = createWorkbenchClient(ctx);
+  // Optional shell services: looked up lazily, so a shell without a session
+  // list still renders the workbench (the badge shows its degraded state).
+  const shell = createSessionShell(ctx);
   const panel = (props: HelloPanelProps): React.ReactElement =>
-    React.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc });
+    React.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc, shell });
 
   ctx.slots.inject('main', () =>
     ctx.slots.register(
