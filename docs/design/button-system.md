@@ -365,7 +365,7 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 
 同一批调用点都已使用这些类，无需改结构：`workbench.ts:415/479/499/531/673/713/752/757`、`create-workbench-dialog.ts:136/155/160`、`config-drawer.ts:155/534/674/801`、`workbench-editor.ts:323/368/381/397/409/420/430/437`、`renderers/harness.ts:75`。
 
-2026-11-04 已落地：`workbench.ts` 的 `.dshwb-primary` / `.dshwb-secondary` / `.dshwb-link` / `.dshwb-link-danger`，`config-drawer.ts` 的 `.dshwb-icon-btn` 系列改成 token 配对 + 外壳焦点规则；同时给面板根加 `.dshwb-panel-root` 深色画布 token 锁定（见 3.7）。`renderers/harness.ts`、`.dshwb-item` 行卡片、输入框等留给下一批。
+2026-11-04 已落地：`workbench.ts` 的 `.dshwb-primary` / `.dshwb-secondary` / `.dshwb-link` / `.dshwb-link-danger`，`config-drawer.ts` 的 `.dshwb-icon-btn` 系列改成 token 配对 + 外壳焦点规则；同时给面板根加 `.dshwb-panel-root` 深色画布 token 锁定（见 3.7）。同日晚补齐 harness 按钮：`.dshwb-harness-open` 改为 secondary `--sm`（28px、`border-l3`、`label-primary`、交互叠层、外壳焦点环），`.dshwb-harness-card`（可点击卡片）的 hover/active/focus 改用交互叠层与外壳焦点环。`.dshwb-item` 行卡片、输入框、状态徽标等留给下一批。
 
 ### 5.2 参考实现（可直接落进各 CSS 字符串）
 
