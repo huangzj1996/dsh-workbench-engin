@@ -42,10 +42,479 @@ __export(index_exports, {
   name: () => name
 });
 module.exports = __toCommonJS(index_exports);
+var React12 = __toESM(require("react"), 1);
+
+// src/shared/workbench/protocol.ts
+var WORKBENCH_RPC_ENDPOINT = "workbench";
+
+// src/client/rpc.ts
+var CARRIER_CHANNEL = "/api";
+var CARRIER_ENDPOINT = WORKBENCH_RPC_ENDPOINT;
+var CONNECTION_WAIT_MS = 5e3;
+var WorkbenchRpcError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "WorkbenchRpcError";
+    this.code = code;
+  }
+};
+async function resolveConnection(ctx) {
+  const existing = ctx.get("connection");
+  if (existing !== void 0 && existing.rpc !== void 0) return existing;
+  if (typeof ctx.inject !== "function") return existing;
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    try {
+      ctx.inject?.(["connection"], done);
+    } catch {
+      done();
+    }
+    setTimeout(done, CONNECTION_WAIT_MS);
+  });
+  return ctx.get("connection");
+}
+function createWorkbenchClient(ctx) {
+  async function call(method, payload) {
+    const connection = await resolveConnection(ctx);
+    const rpc = connection?.rpc;
+    if (rpc === void 0 || typeof rpc.call !== "function") {
+      throw new WorkbenchRpcError("internal", "连接服务不可用，请稍后重试");
+    }
+    let reply;
+    try {
+      reply = await rpc.call(CARRIER_CHANNEL, CARRIER_ENDPOINT, { method, payload });
+    } catch (error) {
+      throw new WorkbenchRpcError(
+        "internal",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    const envelope = reply;
+    if (typeof envelope === "object" && envelope !== null && "ok" in envelope) {
+      if (envelope.ok) return envelope.value;
+      throw new WorkbenchRpcError(envelope.error.code, envelope.error.message);
+    }
+    throw new WorkbenchRpcError("internal", `RPC 返回格式不正确：${method}`);
+  }
+  return {
+    getRootConfig: () => call("getRootConfig", {}),
+    setRoot: (root) => call("setRoot", { root }),
+    pickRoot: () => call("pickRoot", {}),
+    list: () => call("list", {}),
+    read: (id) => call("read", { id }),
+    save: (workbench) => call("save", { workbench }),
+    delete: (id) => call("delete", { id })
+  };
+}
+
+// src/client/session-shell.ts
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function serviceOf(ctx, name2) {
+  try {
+    const value = ctx.get(name2);
+    return isRecord(value) ? value : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function titleOf(row) {
+  for (const key of ["title", "displayTitle"]) {
+    const value = row[key];
+    if (typeof value === "string" && value.trim() !== "") return value.trim();
+  }
+  return "";
+}
+function sessionOf(id, row) {
+  return {
+    id,
+    title: titleOf(row),
+    running: row["running"] === true,
+    blank: row["blank"] === true
+  };
+}
+function rawSessions(sessions) {
+  const list = sessions?.list;
+  if (typeof list === "function") {
+    try {
+      return list();
+    } catch {
+      return void 0;
+    }
+  }
+  if (list !== void 0 && typeof list.getSnapshot === "function") {
+    try {
+      return list.getSnapshot();
+    } catch {
+      return void 0;
+    }
+  }
+  return void 0;
+}
+function normalizeSessions(raw) {
+  const out = [];
+  const seen = /* @__PURE__ */ new Set();
+  const push = (id, row) => {
+    const trimmed = id.trim();
+    if (trimmed === "" || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    out.push(sessionOf(trimmed, row));
+  };
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      if (typeof item === "string") {
+        push(item, {});
+      } else if (isRecord(item) && typeof item["id"] === "string") {
+        push(item["id"], item);
+      }
+    }
+    return out;
+  }
+  if (!isRecord(raw)) return [];
+  const byId = raw["byId"];
+  if (isRecord(byId)) {
+    const ids = Array.isArray(raw["ids"]) ? raw["ids"] : Object.keys(byId);
+    for (const id of ids) {
+      if (typeof id !== "string") continue;
+      const row = byId[id];
+      if (isRecord(row)) push(id, row);
+    }
+    for (const id of Object.keys(byId)) {
+      const row = byId[id];
+      if (isRecord(row)) push(id, row);
+    }
+    return out;
+  }
+  const items = raw["items"];
+  return Array.isArray(items) ? normalizeSessions(items) : [];
+}
+function currentIdOf(raw) {
+  if (!isRecord(raw)) return null;
+  const current = raw["current"];
+  return typeof current === "string" && current.trim() !== "" ? current.trim() : null;
+}
+function readSnapshot(ctx) {
+  const sessions = serviceOf(ctx, "sessions");
+  const raw = rawSessions(sessions);
+  return {
+    available: raw !== void 0,
+    sessions: normalizeSessions(raw),
+    currentId: currentIdOf(raw)
+  };
+}
+function listModelOf(ctx) {
+  const sessions = serviceOf(ctx, "sessions");
+  const list = sessions?.list;
+  return list !== void 0 && typeof list !== "function" && typeof list.getSnapshot === "function" ? list : null;
+}
+function sameSnapshot(a, b) {
+  if (a.available !== b.available || a.currentId !== b.currentId) return false;
+  if (a.sessions.length !== b.sessions.length) return false;
+  return a.sessions.every((session, index) => {
+    const other = b.sessions[index];
+    return other !== void 0 && session.id === other.id && session.title === other.title && session.running === other.running && session.blank === other.blank;
+  });
+}
+function createSessionShell(ctx) {
+  let cached = readSnapshot(ctx);
+  const listeners = /* @__PURE__ */ new Set();
+  let followedModel = null;
+  let stopFollowing = null;
+  const notifyIfChanged = () => {
+    const next = readSnapshot(ctx);
+    if (sameSnapshot(next, cached)) return;
+    cached = next;
+    for (const listener of [...listeners]) listener();
+  };
+  const follow = () => {
+    const model = listModelOf(ctx);
+    if (model === followedModel) return;
+    if (stopFollowing !== null) {
+      try {
+        stopFollowing();
+      } catch {
+      }
+      stopFollowing = null;
+    }
+    followedModel = model;
+    if (model !== null && typeof model.subscribe === "function") {
+      try {
+        stopFollowing = model.subscribe(notifyIfChanged);
+      } catch {
+        stopFollowing = null;
+      }
+    }
+  };
+  return {
+    getSnapshot: () => cached,
+    subscribe(listener) {
+      listeners.add(listener);
+      follow();
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    openSession(sessionId) {
+      const target = sessionId.trim();
+      if (target === "") return false;
+      const ui = serviceOf(ctx, "uiWorkspace");
+      if (ui === void 0 || typeof ui.openSession !== "function") return false;
+      try {
+        const result = ui.openSession(target);
+        if (isRecord(result) && typeof result.then === "function") {
+          result.then(void 0, () => void 0);
+        }
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    refresh() {
+      const sessions = serviceOf(ctx, "sessions");
+      if (sessions !== void 0 && typeof sessions.refresh === "function") {
+        try {
+          void sessions.refresh();
+        } catch {
+        }
+      }
+      follow();
+      notifyIfChanged();
+    }
+  };
+}
 
 // src/client/workbench.ts
+var React11 = __toESM(require("react"), 1);
+
+// src/client/create-workbench-dialog.ts
+var React2 = __toESM(require("react"), 1);
+
+// src/client/clipboard.ts
 var React = __toESM(require("react"), 1);
-var PANEL_ID = "hello-word";
+async function copyText(text) {
+  try {
+    const clipboard = typeof navigator === "undefined" ? void 0 : navigator.clipboard;
+    if (clipboard === void 0 || typeof clipboard.writeText !== "function") return false;
+    await clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function useCopyToClipboard() {
+  const [copied, setCopied] = React.useState(false);
+  const timer = React.useRef(null);
+  const copy = React.useCallback((text) => {
+    void copyText(text).then((ok) => {
+      if (!ok) return;
+      setCopied(true);
+      if (timer.current !== null) window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => {
+        timer.current = null;
+        setCopied(false);
+      }, 1500);
+    });
+  }, []);
+  React.useEffect(
+    () => () => {
+      if (timer.current !== null) window.clearTimeout(timer.current);
+    },
+    []
+  );
+  return { copied, copy };
+}
+
+// src/shared/workbench/errors.ts
+function describeError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+// src/shared/workbench/schema.ts
+var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+var WORKBENCH_ID_MAX_LENGTH = 64;
+var DEFAULT_COLS = 4;
+var DEFAULT_SPAN = 2;
+
+// src/shared/workbench/ids.ts
+var RANDOM_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
+var RANDOM_LENGTH = 6;
+function slugifyWorkbenchName(name2) {
+  return name2.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64);
+}
+function randomSuffix(random) {
+  let suffix = "";
+  for (let index = 0; index < RANDOM_LENGTH; index += 1) {
+    const pick = Math.floor(random() * RANDOM_ALPHABET.length);
+    suffix += RANDOM_ALPHABET[Math.min(RANDOM_ALPHABET.length - 1, Math.max(0, pick))];
+  }
+  return suffix;
+}
+function generateWorkbenchId(name2, takenIds, random = Math.random) {
+  const taken = new Set(takenIds);
+  let base = slugifyWorkbenchName(name2);
+  if (base === "" || base === "wb") base = `wb-${randomSuffix(random)}`;
+  if (!WORKBENCH_ID_PATTERN.test(base)) base = `wb-${randomSuffix(random)}`;
+  let candidate = base;
+  let attempt = 2;
+  while (taken.has(candidate)) {
+    const suffix = `-${attempt}`;
+    const room = Math.max(1, WORKBENCH_ID_MAX_LENGTH - suffix.length);
+    const trimmed = base.slice(0, room).replace(/-+$/g, "") || "wb";
+    candidate = `${trimmed}${suffix}`;
+    attempt += 1;
+  }
+  return candidate;
+}
+
+// src/client/workbench-name.ts
+function normalizeWorkbenchName(raw) {
+  const trimmed = raw.trim();
+  return trimmed === "" ? null : trimmed;
+}
+function syncNameDraft(draft, committedName) {
+  return draft.trim() === committedName.trim() ? draft : committedName;
+}
+
+// src/client/create-workbench-dialog.ts
+function CreateWorkbenchDialog(props) {
+  const tr = props.translate;
+  const [draftName, setDraftName] = React2.useState("");
+  const [busy, setBusy] = React2.useState(false);
+  const [error, setError] = React2.useState(null);
+  const { copied, copy } = useCopyToClipboard();
+  const inputRef = React2.useRef(null);
+  React2.useEffect(() => {
+    inputRef.current?.focus();
+    const onKeyDown = (event) => {
+      if (event.key !== "Escape" || event.shiftKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!busy) props.onClose();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [props.onClose, busy]);
+  const name2 = normalizeWorkbenchName(draftName);
+  const id = React2.useMemo(
+    () => name2 === null ? "" : generateWorkbenchId(name2, props.takenIds),
+    [name2, props.takenIds]
+  );
+  const create = () => {
+    if (name2 === null || id === "" || busy) return;
+    setBusy(true);
+    setError(null);
+    void props.onCreate(name2, id).catch((cause) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      setBusy(false);
+    });
+  };
+  const canCreate = name2 !== null && !busy;
+  return React2.createElement(
+    "div",
+    {
+      className: "dshwb-overlay",
+      onClick: () => {
+        if (!busy) props.onClose();
+      }
+    },
+    React2.createElement(
+      "div",
+      {
+        className: "dshwb-dialog",
+        role: "dialog",
+        "aria-modal": true,
+        "aria-label": tr("dialog.title", "创建工作台"),
+        onClick: (event) => event.stopPropagation()
+      },
+      React2.createElement("h2", { className: "dshwb-dialog-title" }, tr("dialog.title", "创建工作台")),
+      React2.createElement(
+        "p",
+        { className: "dshwb-dialog-sub" },
+        tr("dialog.sub", "给它起个名字，之后再配置子面板与版面。")
+      ),
+      React2.createElement(
+        "label",
+        { className: "dshwb-label", htmlFor: "dshwb-create-name" },
+        tr("dialog.nameLabel", "工作台名称")
+      ),
+      React2.createElement("input", {
+        id: "dshwb-create-name",
+        ref: inputRef,
+        className: "dshwb-input",
+        type: "text",
+        value: draftName,
+        placeholder: tr("dialog.namePlaceholder", "例如：我的工作台"),
+        autoComplete: "off",
+        spellCheck: false,
+        disabled: busy,
+        onChange: (event) => setDraftName(event.target.value),
+        onKeyDown: (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          create();
+        }
+      }),
+      React2.createElement(
+        "label",
+        { className: "dshwb-label dshwb-label-spaced", htmlFor: "dshwb-create-id" },
+        tr("dialog.idLabel", "工作台 id（自动生成，只读）")
+      ),
+      React2.createElement(
+        "div",
+        { className: "dshwb-idrow" },
+        React2.createElement("input", {
+          id: "dshwb-create-id",
+          className: "dshwb-idvalue",
+          type: "text",
+          value: id,
+          readOnly: true,
+          placeholder: tr("dialog.idPlaceholder", "输入名称后自动生成"),
+          onFocus: (event) => event.currentTarget.select()
+        }),
+        React2.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-secondary",
+            disabled: id === "" || busy,
+            onClick: () => copy(id)
+          },
+          copied ? tr("dialog.copied", "已复制") : tr("dialog.copy", "复制")
+        )
+      ),
+      React2.createElement(
+        "p",
+        { className: "dshwb-dialog-hint" },
+        tr("dialog.idHint", "id 也是文件夹名，创建后不可修改；可以复制给 AI 使用。")
+      ),
+      error !== null && React2.createElement("p", { className: "dshwb-error", role: "alert" }, error),
+      React2.createElement(
+        "div",
+        { className: "dshwb-actions" },
+        React2.createElement(
+          "button",
+          { type: "button", className: "dshwb-secondary", disabled: busy, onClick: props.onClose },
+          tr("dialog.cancel", "取消")
+        ),
+        React2.createElement(
+          "button",
+          { type: "button", className: "dshwb-primary", disabled: !canCreate, onClick: create },
+          busy ? tr("dialog.creating", "创建中…") : tr("dialog.create", "创建")
+        )
+      )
+    )
+  );
+}
+
+// src/client/hero-backdrop.ts
+var React3 = __toESM(require("react"), 1);
 var HERO_FALLBACK = "radial-gradient(ellipse at 89% 46%, #777f89 0%, #204a7e 35%, #000 75%)";
 var HERO_MASK = "linear-gradient(#000000fc 0%, #000000e8 8.98%, transparent 100%)";
 var HERO_BASE = "#0f1722";
@@ -355,9 +824,9 @@ function startHeroShader(canvas, firstFrameOnly) {
   };
 }
 function HeroBackdrop() {
-  const layerRef = React.useRef(null);
-  const canvasRef = React.useRef(null);
-  React.useEffect(() => {
+  const layerRef = React3.useRef(null);
+  const canvasRef = React3.useRef(null);
+  React3.useEffect(() => {
     const layer = layerRef.current;
     const canvas = canvasRef.current;
     if (layer === null || canvas === null) return void 0;
@@ -372,7 +841,7 @@ function HeroBackdrop() {
       if (dispose !== null) dispose();
     };
   }, []);
-  return React.createElement(
+  return React3.createElement(
     "div",
     {
       ref: layerRef,
@@ -388,7 +857,7 @@ function HeroBackdrop() {
         WebkitMask: HERO_MASK
       }
     },
-    React.createElement("canvas", {
+    React3.createElement("canvas", {
       ref: canvasRef,
       "aria-hidden": true,
       style: {
@@ -402,76 +871,2182 @@ function HeroBackdrop() {
     })
   );
 }
+
+// src/client/root-picker.ts
+async function requestRootPick(client) {
+  let reply;
+  try {
+    reply = await client.pickRoot();
+  } catch (error) {
+    const unavailable = error instanceof WorkbenchRpcError && error.code === "picker-unavailable";
+    return { kind: "fallback", reason: unavailable ? "picker-unavailable" : "picker-failed" };
+  }
+  if (reply !== null && typeof reply === "object" && reply.path === null) return { kind: "cancelled" };
+  const path = reply !== null && typeof reply === "object" ? reply.path : void 0;
+  if (typeof path === "string" && path.trim() !== "") return { kind: "picked", path };
+  return { kind: "fallback", reason: "picker-failed" };
+}
+
+// src/client/workbench-editor.ts
+var React10 = __toESM(require("react"), 1);
+
+// src/client/config-drawer.ts
+var React5 = __toESM(require("react"), 1);
+
+// src/client/harness-binding.ts
+var LIST_SEPARATOR = /[,，]/;
+function parsePinTargetText(text) {
+  return text.split(LIST_SEPARATOR).map((item) => item.trim()).filter((item) => item !== "");
+}
+function normalizePinTarget(value) {
+  if (Array.isArray(value)) {
+    return value.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item !== "");
+  }
+  if (typeof value === "string") return parsePinTargetText(value);
+  return [];
+}
+function stringField(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" ? value.trim() : "";
+}
+function harnessBinding(panel) {
+  return {
+    sessionTitle: stringField(panel, "sessionTitle"),
+    sessionId: stringField(panel, "sessionId"),
+    pinTarget: normalizePinTarget(panel["pinTarget"])
+  };
+}
+function bindingPatch(panel, session) {
+  const sessionId = session.id.trim();
+  if (sessionId === "") return null;
+  const sessionTitle = typeof session.title === "string" ? session.title.trim() : "";
+  return {
+    sessionId,
+    sessionTitle,
+    pinTarget: normalizePinTarget(panel["pinTarget"])
+  };
+}
+
+// src/client/harness-view.ts
+function findSession(snapshot, sessionId) {
+  const id = sessionId.trim();
+  if (id === "") return null;
+  return snapshot.sessions.find((session) => session.id === id) ?? null;
+}
+function harnessOpenTarget(binding) {
+  const sessionId = binding.sessionId.trim();
+  return sessionId === "" ? null : sessionId;
+}
+function harnessBadgeView(binding, snapshot) {
+  const sessionId = binding.sessionId.trim();
+  const storedTitle = binding.sessionTitle.trim();
+  if (sessionId === "") return { kind: "unbound", title: storedTitle };
+  if (!snapshot.available) return { kind: "unavailable", sessionId, title: storedTitle };
+  const session = findSession(snapshot, sessionId);
+  if (session === null) return { kind: "missing", sessionId, title: storedTitle };
+  return {
+    kind: "bound",
+    sessionId: session.id,
+    title: session.title.trim() !== "" ? session.title : storedTitle,
+    running: session.running
+  };
+}
+
+// src/client/panel-types.ts
+var PANEL_TYPES = ["reserved", "harness"];
+var PANEL_TYPE_DEFINITIONS = {
+  reserved: {
+    type: "reserved",
+    labelKey: "panel.type.reserved",
+    labelFallback: "占位",
+    titleKey: "panel.new.reserved",
+    titleFallback: "占位面板",
+    defaultFields: () => ({ text: "" }),
+    bindsSession: false
+  },
+  harness: {
+    type: "harness",
+    labelKey: "panel.type.harness",
+    labelFallback: "会话门牌",
+    titleKey: "panel.new.harness",
+    titleFallback: "会话门牌",
+    defaultFields: () => ({ sessionTitle: "", sessionId: "", pinTarget: [] }),
+    bindsSession: true
+  }
+};
+function panelTypeDefinition(type) {
+  return Object.hasOwn(PANEL_TYPE_DEFINITIONS, type) ? PANEL_TYPE_DEFINITIONS[type] : void 0;
+}
+function panelDefaultFields(type) {
+  return PANEL_TYPE_DEFINITIONS[type].defaultFields();
+}
+function panelTypeLabel(tr, type) {
+  const definition = panelTypeDefinition(type);
+  return definition === void 0 ? type : tr(definition.labelKey, definition.labelFallback);
+}
+function panelTypeTitle(tr, type) {
+  const definition = PANEL_TYPE_DEFINITIONS[type];
+  return tr(definition.titleKey, definition.titleFallback);
+}
+
+// src/client/use-session-snapshot.ts
+var React4 = __toESM(require("react"), 1);
+var NO_SHELL_SNAPSHOT = {
+  available: false,
+  sessions: [],
+  currentId: null
+};
+var noShellSnapshot = () => NO_SHELL_SNAPSHOT;
+var noShellSubscribe = () => () => void 0;
+function useSessionSnapshot(shell) {
+  const snapshot = React4.useSyncExternalStore(
+    shell?.subscribe ?? noShellSubscribe,
+    shell?.getSnapshot ?? noShellSnapshot,
+    shell?.getSnapshot ?? noShellSnapshot
+  );
+  React4.useEffect(() => {
+    shell?.refresh();
+  }, [shell]);
+  return snapshot;
+}
+
+// src/client/config-drawer.ts
+var DRAWER_CSS = `
+.dshwb-drawer{box-sizing:border-box;display:flex;flex:0 0 380px;flex-direction:column;max-width:380px;min-height:0;overflow:auto;padding:12px 14px 20px;border:1px solid rgba(255,255,255,.13);border-radius:13px;background:rgba(9,15,26,.82);backdrop-filter:blur(14px);box-shadow:0 14px 36px rgba(0,0,0,.28);color:#eef3fb}
+.dshwb-drawer-head{display:flex;align-items:center;gap:8px;margin:0 0 4px}
+.dshwb-drawer-title{margin:0;flex:1;font-size:14px;font-weight:600;line-height:1.4}
+.dshwb-drawer-section{margin:12px 0 0;padding:12px 0 0;border-top:1px solid rgba(255,255,255,.1)}
+.dshwb-drawer-section-title{margin:0 0 10px;color:rgba(226,234,248,.7);font-size:11.5px;font-weight:600;letter-spacing:.06em}
+.dshwb-field{margin:0 0 10px}
+.dshwb-field-label{display:block;margin:0 0 5px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-textarea{min-height:62px;resize:vertical;line-height:1.5;font-family:inherit}
+.dshwb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.dshwb-idrow{display:flex;align-items:center;gap:8px}
+.dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-panel-list{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;padding:0;list-style:none}
+.dshwb-panel-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid rgba(255,255,255,.1);border-radius:9px;background:rgba(255,255,255,.04)}
+.dshwb-panel-row-active{border-color:var(--dsw-alias-brand-primary);background:rgba(86,160,255,.12)}
+.dshwb-panel-pick{display:flex;flex:1;min-width:0;align-items:center;gap:7px;padding:4px 5px;border:0;border-radius:6px;background:none;color:inherit;font-family:inherit;font-size:12px;text-align:left;cursor:pointer}
+.dshwb-panel-pick:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}
+.dshwb-panel-ordinal{flex:0 0 auto;color:rgba(169,206,255,.85);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
+.dshwb-panel-name{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-size:12.5px}
+.dshwb-panel-kind{flex:0 0 auto;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10px}
+.dshwb-icon-btn{box-sizing:border-box;display:inline-flex;flex:0 0 auto;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-tertiary);font-family:inherit;font-size:12px;line-height:1;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-icon-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
+.dshwb-icon-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
+.dshwb-icon-btn:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-icon-btn:disabled{opacity:.4;cursor:not-allowed}
+.dshwb-icon-btn-danger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-danger);color:var(--dsw-alias-state-error-primary)}
+.dshwb-confirm{display:flex;flex:0 0 auto;align-items:center;gap:4px}
+.dshwb-confirm-text{color:#ffb4a8;font-size:11px;white-space:nowrap}
+.dshwb-add-row{display:flex;flex-wrap:wrap;gap:8px}
+.dshwb-add-row .dshwb-input{flex:1;min-width:0;color-scheme:dark}
+.dshwb-drawer select.dshwb-input{color-scheme:dark}
+.dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
+.dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-drawer-openrow{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}
+.dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
+.dshwb-session-dot-running{background:#56a0ff}
+.dshwb-session-dot-warn{background:#ffc454}
+@media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
+`;
+function stringField2(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" ? value : "";
+}
+function stringArrayField(panel, key) {
+  const value = panel[key];
+  return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+}
+function rawStringField(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" ? value : "";
+}
+function sessionOptionLabel(tr, session) {
+  const title = session.title !== "" ? session.title : tr("panel.harness.untitled", "未命名会话");
+  return session.running ? `${title} · ${tr("panel.harness.running", "运行中")}` : title;
+}
+function HarnessFields(props) {
+  const { panel, tr, shell, onValue } = props;
+  const binding = harnessBinding(panel);
+  const snapshot = useSessionSnapshot(shell);
+  const bound = findSession(snapshot, binding.sessionId);
+  const missing = snapshot.available && binding.sessionId !== "" && bound === null;
+  const openTarget = harnessOpenTarget(binding);
+  const [openFailed, setOpenFailed] = React5.useState(false);
+  React5.useEffect(() => {
+    setOpenFailed(false);
+  }, [openTarget]);
+  const open = () => {
+    if (openTarget === null) return;
+    setOpenFailed(false);
+    if (shell === void 0 || !shell.openSession(openTarget)) setOpenFailed(true);
+  };
+  const openRow = openTarget === null ? null : React5.createElement(
+    "div",
+    { className: "dshwb-drawer-openrow" },
+    React5.createElement(
+      "button",
+      { type: "button", className: "dshwb-secondary", onClick: open },
+      tr("panel.harness.open", "打开会话")
+    ),
+    React5.createElement(
+      "span",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.harness.openByIdHint", "按保存的会话 id 直接打开")
+    )
+  );
+  const openError = openFailed ? React5.createElement(
+    "p",
+    { className: "dshwb-error", role: "alert" },
+    tr("panel.harness.openFailed", "打不开这条会话：外壳没有提供打开能力。")
+  ) : null;
+  const pick = (id) => {
+    if (id === "") {
+      onValue({ sessionId: "", sessionTitle: "" });
+      return;
+    }
+    const session = findSession(snapshot, id);
+    if (session === null) return;
+    const patch = bindingPatch(panel, session);
+    if (patch !== null) onValue(patch);
+  };
+  const pinTargetField = React5.createElement(TextField, {
+    id: "dshwb-panel-pin-target",
+    label: tr("panel.pinTarget", "定位目标"),
+    value: stringArrayField(panel, "pinTarget").join(", "),
+    placeholder: tr("panel.pinTargetPlaceholder", "多个用逗号分隔"),
+    onValue: (value) => onValue({ pinTarget: parsePinTargetText(value) })
+  });
+  if (!snapshot.available) {
+    return React5.createElement(
+      React5.Fragment,
+      null,
+      React5.createElement(
+        "p",
+        { className: "dshwb-drawer-hint" },
+        tr(
+          "panel.sessions.unavailable",
+          "读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。"
+        )
+      ),
+      React5.createElement(TextField, {
+        id: "dshwb-panel-session-id",
+        label: tr("panel.sessionId", "会话 id"),
+        value: rawStringField(panel, "sessionId"),
+        placeholder: tr("panel.sessionIdPlaceholder", "要打开的会话"),
+        onValue: (value) => onValue({ sessionId: value })
+      }),
+      openRow,
+      openError,
+      React5.createElement(TextField, {
+        id: "dshwb-panel-session-title",
+        label: tr("panel.sessionTitle", "会话标题"),
+        value: rawStringField(panel, "sessionTitle"),
+        placeholder: tr("panel.sessionTitlePlaceholder", "显示在门牌上的标题"),
+        onValue: (value) => onValue({ sessionTitle: value })
+      }),
+      pinTargetField
+    );
+  }
+  const options = [
+    React5.createElement(
+      "option",
+      { key: "", value: "" },
+      tr("panel.sessions.none", "未绑定（选一条会话）")
+    )
+  ];
+  for (const session of snapshot.sessions) {
+    options.push(
+      React5.createElement(
+        "option",
+        { key: session.id, value: session.id },
+        sessionOptionLabel(tr, session)
+      )
+    );
+  }
+  if (missing) {
+    const label = binding.sessionTitle !== "" ? binding.sessionTitle : binding.sessionId;
+    options.push(
+      React5.createElement(
+        "option",
+        { key: binding.sessionId, value: binding.sessionId },
+        `${label} · ${tr("panel.sessions.missing", "不可用")}`
+      )
+    );
+  }
+  const status = bound !== null ? React5.createElement(
+    "p",
+    { className: "dshwb-session-status" },
+    React5.createElement("span", {
+      className: bound.running ? "dshwb-session-dot dshwb-session-dot-running" : "dshwb-session-dot"
+    }),
+    bound.running ? tr("panel.harness.running", "运行中") : tr("panel.harness.idle", "空闲")
+  ) : missing ? React5.createElement(
+    "p",
+    { className: "dshwb-session-status" },
+    React5.createElement("span", { className: "dshwb-session-dot dshwb-session-dot-warn" }),
+    tr("panel.sessions.missing", "绑定的会话已不在外壳列表里")
+  ) : null;
+  return React5.createElement(
+    React5.Fragment,
+    null,
+    React5.createElement(
+      Field,
+      { label: tr("panel.sessions.label", "会话"), htmlFor: "dshwb-panel-session-pick" },
+      React5.createElement(
+        "select",
+        {
+          id: "dshwb-panel-session-pick",
+          className: "dshwb-input",
+          value: binding.sessionId,
+          onChange: (event) => pick(event.target.value)
+        },
+        options
+      )
+    ),
+    status,
+    missing && openRow,
+    openError,
+    snapshot.sessions.length === 0 && React5.createElement(
+      "p",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.sessions.empty", "外壳里还没有会话，先去侧栏建一条。")
+    ),
+    React5.createElement(TextField, {
+      id: "dshwb-panel-session-title",
+      label: tr("panel.sessionTitle", "会话标题"),
+      value: rawStringField(panel, "sessionTitle"),
+      placeholder: tr("panel.sessionTitlePlaceholder", "显示在门牌上的标题"),
+      hint: tr("panel.sessionTitleHint", "门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。"),
+      onValue: (value) => onValue({ sessionTitle: value })
+    }),
+    pinTargetField
+  );
+}
+function Field(props) {
+  return React5.createElement(
+    "div",
+    { className: "dshwb-field" },
+    React5.createElement("label", { className: "dshwb-field-label", htmlFor: props.htmlFor }, props.label),
+    props.children,
+    props.hint !== void 0 && React5.createElement("p", { className: "dshwb-drawer-hint" }, props.hint)
+  );
+}
+function TextField(props) {
+  return React5.createElement(
+    Field,
+    { label: props.label, htmlFor: props.id, hint: props.hint },
+    React5.createElement("input", {
+      id: props.id,
+      className: "dshwb-input",
+      type: "text",
+      value: props.value,
+      placeholder: props.placeholder,
+      autoComplete: "off",
+      spellCheck: false,
+      onChange: (event) => props.onValue(event.target.value),
+      onBlur: props.onBlur
+    })
+  );
+}
+function TextAreaField(props) {
+  return React5.createElement(
+    Field,
+    { label: props.label, htmlFor: props.id },
+    React5.createElement("textarea", {
+      id: props.id,
+      className: "dshwb-input dshwb-textarea",
+      value: props.value,
+      placeholder: props.placeholder,
+      spellCheck: false,
+      onChange: (event) => props.onValue(event.target.value)
+    })
+  );
+}
+function NumberField(props) {
+  return React5.createElement(
+    Field,
+    { label: props.label, htmlFor: props.id },
+    React5.createElement("input", {
+      id: props.id,
+      className: "dshwb-input",
+      type: "number",
+      inputMode: "numeric",
+      min: props.min,
+      max: props.max,
+      value: props.value === void 0 ? "" : String(props.value),
+      onChange: (event) => {
+        const raw = event.target.value.trim();
+        if (raw === "") {
+          props.onValue(void 0);
+          return;
+        }
+        const parsed = Number(raw);
+        if (!Number.isInteger(parsed) || parsed < props.min) return;
+        if (props.max !== void 0 && parsed > props.max) return;
+        props.onValue(parsed);
+      }
+    })
+  );
+}
+function TypeFields(props) {
+  const { panel, tr, onValue } = props;
+  const definition = panelTypeDefinition(panel.type);
+  if (definition === void 0) {
+    return React5.createElement(
+      "p",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.unknownFields", "这个类型没有内置编辑器；它的未知字段会原样保存。")
+    );
+  }
+  if (definition.bindsSession) {
+    return React5.createElement(HarnessFields, {
+      panel,
+      tr,
+      shell: props.shell,
+      onValue
+    });
+  }
+  return React5.createElement(TextAreaField, {
+    id: `dshwb-panel-text`,
+    label: tr("panel.text", "占位文本"),
+    value: stringField2(panel, "text"),
+    placeholder: tr("panel.textPlaceholder", "占位面板里显示的文字"),
+    onValue: (value) => onValue({ text: value })
+  });
+}
+function ConfigDrawer(props) {
+  const { workbench, tr } = props;
+  const { copied, copy } = useCopyToClipboard();
+  const [nameDraft, setNameDraft] = React5.useState(workbench.name);
+  const [confirmDeleteId, setConfirmDeleteId] = React5.useState(null);
+  const [addType, setAddType] = React5.useState("reserved");
+  React5.useEffect(() => {
+    setNameDraft((draft) => syncNameDraft(draft, workbench.name));
+  }, [workbench.id, workbench.name]);
+  const commitName = (raw) => {
+    setNameDraft(raw);
+    if (normalizeWorkbenchName(raw) !== null) props.onWorkbenchChange({ name: raw.trim() });
+  };
+  const commitNameOnBlur = () => {
+    if (normalizeWorkbenchName(nameDraft) === null) setNameDraft(workbench.name);
+  };
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  const selected = workbench.panels.find((panel) => panel.id === props.selectedPanelId);
+  const workbenchSection = React5.createElement(
+    "section",
+    { className: "dshwb-drawer-section" },
+    React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.workbench", "工作台")),
+    React5.createElement(TextField, {
+      id: "dshwb-workbench-name",
+      label: tr("drawer.name", "名称"),
+      value: nameDraft,
+      placeholder: tr("drawer.namePlaceholder", "例如：我的工作台"),
+      onValue: commitName,
+      onBlur: commitNameOnBlur
+    }),
+    React5.createElement(TextAreaField, {
+      id: "dshwb-workbench-description",
+      label: tr("drawer.description", "描述"),
+      value: workbench.description ?? "",
+      placeholder: tr("drawer.descriptionPlaceholder", "这个工作台是做什么的"),
+      onValue: (value) => props.onWorkbenchChange({ description: value })
+    }),
+    React5.createElement(NumberField, {
+      id: "dshwb-workbench-cols",
+      label: tr("drawer.cols", "列数"),
+      value: cols,
+      min: 1,
+      max: 12,
+      onValue: (value) => {
+        if (value !== void 0) props.onWorkbenchChange({ cols: value });
+      }
+    }),
+    React5.createElement(
+      "div",
+      { className: "dshwb-field" },
+      React5.createElement(
+        "label",
+        { className: "dshwb-field-label", htmlFor: "dshwb-workbench-id" },
+        tr("drawer.id", "id（创建后只读）")
+      ),
+      React5.createElement(
+        "div",
+        { className: "dshwb-idrow" },
+        React5.createElement(
+          "input",
+          {
+            id: "dshwb-workbench-id",
+            className: "dshwb-idvalue",
+            type: "text",
+            value: workbench.id,
+            readOnly: true,
+            onFocus: (event) => event.currentTarget.select()
+          }
+        ),
+        React5.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-secondary",
+            onClick: () => copy(workbench.id)
+          },
+          copied ? tr("drawer.copied", "已复制") : tr("drawer.copy", "复制")
+        )
+      )
+    )
+  );
+  const panelSection = React5.createElement(
+    "section",
+    { className: "dshwb-drawer-section" },
+    React5.createElement("h3", { className: "dshwb-drawer-section-title" }, tr("drawer.panels", "子面板")),
+    workbench.panels.length === 0 ? React5.createElement("p", { className: "dshwb-drawer-hint" }, tr("drawer.noPanels", "还没有子面板。")) : React5.createElement(
+      "ul",
+      { className: "dshwb-panel-list" },
+      workbench.panels.map(
+        (panel, index) => React5.createElement(
+          "li",
+          {
+            key: panel.id,
+            className: panel.id === props.selectedPanelId ? "dshwb-panel-row dshwb-panel-row-active" : "dshwb-panel-row"
+          },
+          React5.createElement(
+            "button",
+            {
+              type: "button",
+              className: "dshwb-panel-pick",
+              title: panel.title,
+              onClick: () => props.onSelectPanel(panel.id)
+            },
+            React5.createElement(
+              "span",
+              { className: "dshwb-panel-ordinal" },
+              String(index + 1).padStart(2, "0")
+            ),
+            React5.createElement(
+              "span",
+              { className: "dshwb-panel-name" },
+              panel.title.trim() === "" ? tr("panel.untitled", "未命名") : panel.title
+            ),
+            React5.createElement("span", { className: "dshwb-panel-kind" }, panel.type)
+          ),
+          confirmDeleteId === panel.id ? React5.createElement(
+            "span",
+            { className: "dshwb-confirm" },
+            React5.createElement(
+              "span",
+              { className: "dshwb-confirm-text" },
+              tr("drawer.deleteConfirm", "确认删除？")
+            ),
+            React5.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-icon-btn",
+                title: tr("drawer.confirm", "确认"),
+                onClick: () => {
+                  setConfirmDeleteId(null);
+                  props.onDeletePanel(panel.id);
+                }
+              },
+              "✓"
+            ),
+            React5.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-icon-btn",
+                title: tr("drawer.cancel", "取消"),
+                onClick: () => setConfirmDeleteId(null)
+              },
+              "✕"
+            )
+          ) : React5.createElement(
+            React5.Fragment,
+            null,
+            React5.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-icon-btn",
+                title: tr("drawer.moveUp", "上移"),
+                disabled: index === 0,
+                onClick: () => props.onMovePanel(panel.id, -1)
+              },
+              "↑"
+            ),
+            React5.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-icon-btn",
+                title: tr("drawer.moveDown", "下移"),
+                disabled: index === workbench.panels.length - 1,
+                onClick: () => props.onMovePanel(panel.id, 1)
+              },
+              "↓"
+            ),
+            React5.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-icon-btn dshwb-icon-btn-danger",
+                title: tr("drawer.delete", "删除"),
+                onClick: () => setConfirmDeleteId(panel.id)
+              },
+              "✕"
+            )
+          )
+        )
+      )
+    ),
+    React5.createElement(
+      "div",
+      { className: "dshwb-add-row" },
+      React5.createElement(
+        "select",
+        {
+          className: "dshwb-input",
+          "aria-label": tr("panel.type", "类型"),
+          value: addType,
+          onChange: (event) => setAddType(event.target.value)
+        },
+        PANEL_TYPES.map(
+          (type) => React5.createElement("option", { key: type, value: type }, panelTypeLabel(tr, type))
+        )
+      ),
+      React5.createElement(
+        "button",
+        {
+          type: "button",
+          className: "dshwb-secondary",
+          onClick: () => props.onAddPanel(addType)
+        },
+        tr("drawer.add", "添加子面板")
+      )
+    )
+  );
+  const typeOptions = React5.useMemo(() => {
+    const known = new Set(PANEL_TYPES);
+    const options = [...PANEL_TYPES];
+    if (selected !== void 0 && !known.has(selected.type)) options.push(selected.type);
+    return options;
+  }, [selected]);
+  const selectedSection = React5.createElement(
+    "section",
+    { className: "dshwb-drawer-section" },
+    React5.createElement(
+      "h3",
+      { className: "dshwb-drawer-section-title" },
+      tr("drawer.panelProps", "子面板属性")
+    ),
+    selected === void 0 ? React5.createElement(
+      "p",
+      { className: "dshwb-drawer-hint" },
+      tr("drawer.selectPanelHint", "在下面的列表里选择一个子面板来编辑它的属性。")
+    ) : React5.createElement(
+      React5.Fragment,
+      null,
+      React5.createElement(TextField, {
+        id: "dshwb-panel-title",
+        label: tr("panel.title", "标题"),
+        value: selected.title,
+        placeholder: tr("panel.titlePlaceholder", "显示在子面板顶部的标题"),
+        onValue: (value) => props.onPanelChange(selected.id, { title: value })
+      }),
+      React5.createElement(TextField, {
+        id: "dshwb-panel-sub",
+        label: tr("panel.sub", "副标题"),
+        value: selected.sub ?? "",
+        placeholder: tr("panel.subPlaceholder", "可选的一行补充说明"),
+        onValue: (value) => props.onPanelChange(selected.id, { sub: value })
+      }),
+      React5.createElement(
+        Field,
+        { label: tr("panel.type", "类型"), htmlFor: "dshwb-panel-type" },
+        React5.createElement(
+          "select",
+          {
+            id: "dshwb-panel-type",
+            className: "dshwb-input",
+            value: selected.type,
+            onChange: (event) => props.onPanelTypeChange(selected.id, event.target.value)
+          },
+          typeOptions.map(
+            (type) => React5.createElement(
+              "option",
+              { key: type, value: type },
+              panelTypeLabel(tr, type)
+            )
+          )
+        )
+      ),
+      React5.createElement(
+        Field,
+        { label: tr("panel.layout", "位置与跨度"), hint: tr("panel.layoutHint", "留空表示自动排列；坐标从 1 开始。") },
+        React5.createElement(
+          "div",
+          { className: "dshwb-grid2" },
+          React5.createElement(NumberField, {
+            id: "dshwb-panel-col",
+            label: tr("panel.col", "起始列"),
+            value: selected.col,
+            min: 1,
+            onValue: (value) => props.onPanelChange(selected.id, { col: value })
+          }),
+          React5.createElement(NumberField, {
+            id: "dshwb-panel-row",
+            label: tr("panel.row", "起始行"),
+            value: selected.row,
+            min: 1,
+            onValue: (value) => props.onPanelChange(selected.id, { row: value })
+          }),
+          React5.createElement(NumberField, {
+            id: "dshwb-panel-w",
+            label: tr("panel.w", "跨列"),
+            value: selected.w,
+            min: 1,
+            max: 12,
+            onValue: (value) => props.onPanelChange(selected.id, { w: value })
+          }),
+          React5.createElement(NumberField, {
+            id: "dshwb-panel-h",
+            label: tr("panel.h", "跨行"),
+            value: selected.h,
+            min: 1,
+            onValue: (value) => props.onPanelChange(selected.id, { h: value })
+          })
+        )
+      ),
+      React5.createElement(TypeFields, {
+        panel: selected,
+        tr,
+        shell: props.shell,
+        onValue: (patch) => props.onPanelChange(selected.id, patch)
+      })
+    )
+  );
+  return React5.createElement(
+    "aside",
+    { className: "dshwb-drawer", "aria-label": tr("drawer.title", "配置") },
+    React5.createElement("style", { dangerouslySetInnerHTML: { __html: DRAWER_CSS } }),
+    React5.createElement(
+      "header",
+      { className: "dshwb-drawer-head" },
+      React5.createElement("h2", { className: "dshwb-drawer-title" }, tr("drawer.title", "配置")),
+      React5.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: props.onClose },
+        tr("drawer.close", "收起")
+      )
+    ),
+    workbenchSection,
+    panelSection,
+    selectedSection
+  );
+}
+
+// src/client/workbench-grid.ts
+var React9 = __toESM(require("react"), 1);
+
+// src/shared/workbench/grid.ts
+function panelGridPlacement(panel) {
+  const placement = {};
+  const w = panel.w ?? DEFAULT_SPAN;
+  const h = panel.h ?? DEFAULT_SPAN;
+  if (panel.col !== void 0) placement.gridColumn = `${panel.col} / span ${w}`;
+  if (panel.row !== void 0) placement.gridRow = `${panel.row} / span ${h}`;
+  return placement;
+}
+function panelIndexLabel(index) {
+  return String(index).padStart(2, "0");
+}
+function gridTemplateColumns(cols) {
+  return `repeat(${cols ?? DEFAULT_COLS}, minmax(0, 1fr))`;
+}
+function panelBoundsIssues(panel, cols) {
+  const columns = cols ?? DEFAULT_COLS;
+  const w = panel.w ?? DEFAULT_SPAN;
+  if (panel.col === void 0) {
+    return w > columns ? [`跨度 ${w} 超过列数 ${columns}`] : [];
+  }
+  if (panel.col > columns) return [`起始列 ${panel.col} 超出列数 ${columns}`];
+  if (panel.col + w - 1 > columns) {
+    return [`第 ${panel.col} 列起跨 ${w} 列，超出列数 ${columns}`];
+  }
+  return [];
+}
+
+// src/client/renderers/harness.ts
+var React6 = __toESM(require("react"), 1);
+var HARNESS_CSS = `
+.dshwb-harness{display:flex;flex-direction:column;gap:8px;min-height:0}
+.dshwb-harness-card{display:flex;flex-direction:column;gap:5px;box-sizing:border-box;width:100%;padding:10px 12px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:transparent;color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-harness-card:hover{background:var(--dsw-alias-interactive-bg-hover);border-color:var(--dsw-alias-border-l4)}
+.dshwb-harness-card:active{background:var(--dsw-alias-interactive-bg-active)}
+.dshwb-harness-card:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-harness-head{display:flex;align-items:center;gap:8px;min-width:0}
+.dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-status{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:10.5px;line-height:1.7;white-space:nowrap}
+.dshwb-harness-running{background:rgba(86,160,255,.2);color:#a9ceff}
+.dshwb-harness-idle{background:rgba(255,255,255,.08);color:rgba(226,234,248,.62)}
+.dshwb-harness-unknown{background:rgba(255,196,84,.16);color:#ffd88e}
+.dshwb-harness-id{margin:0;overflow:hidden;color:rgba(226,234,248,.45);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-harness-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
+.dshwb-harness-reason{margin:0;color:rgba(226,234,248,.72);font-size:12px;line-height:1.6}
+.dshwb-harness-error{margin:0;color:#ffb4a8;font-size:11.5px;line-height:1.6}
+.dshwb-harness-degraded{padding:10px 12px;border:1px dashed rgba(255,196,84,.35);border-radius:10px;background:rgba(255,196,84,.06)}
+.dshwb-harness-open{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;height:28px;padding:0 10px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-sm);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-xs-13-font-size);font-weight:500;line-height:var(--dsw-font-xs-13-line-height);white-space:nowrap;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-harness-open:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dshwb-harness-open:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
+.dshwb-harness-open:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-harness-open:disabled{opacity:.4;cursor:not-allowed}
+`;
+function displayTitle(tr, title, sessionId) {
+  if (title !== "") return title;
+  return sessionId !== "" ? sessionId : tr("panel.harness.untitled", "未命名会话");
+}
+function HarnessPanel(props) {
+  const { panel, tr, shell } = props;
+  const binding = harnessBinding(panel);
+  const snapshot = useSessionSnapshot(shell);
+  const view = harnessBadgeView(binding, snapshot);
+  const [openFailed, setOpenFailed] = React6.useState(false);
+  const openTarget = harnessOpenTarget(binding);
+  React6.useEffect(() => {
+    setOpenFailed(false);
+  }, [openTarget]);
+  const open = () => {
+    if (openTarget === null) return;
+    setOpenFailed(false);
+    if (shell === void 0 || !shell.openSession(openTarget)) setOpenFailed(true);
+  };
+  const openButton = () => React6.createElement(
+    "button",
+    {
+      type: "button",
+      className: "dshwb-harness-open",
+      title: tr("panel.harness.openByIdHint", "按保存的会话 id 直接打开"),
+      onClick: open
+    },
+    tr("panel.harness.open", "打开会话")
+  );
+  let body;
+  if (view.kind === "bound") {
+    body = React6.createElement(
+      "button",
+      {
+        type: "button",
+        className: "dshwb-harness-card",
+        title: tr("panel.harness.openHint", "点击打开这条会话"),
+        onClick: open
+      },
+      React6.createElement(
+        "span",
+        { className: "dshwb-harness-head" },
+        React6.createElement(
+          "span",
+          { className: "dshwb-harness-title" },
+          displayTitle(tr, view.title, view.sessionId)
+        ),
+        React6.createElement(
+          "span",
+          {
+            className: view.running ? "dshwb-harness-status dshwb-harness-running" : "dshwb-harness-status dshwb-harness-idle"
+          },
+          view.running ? tr("panel.harness.running", "运行中") : tr("panel.harness.idle", "空闲")
+        )
+      ),
+      React6.createElement("span", { className: "dshwb-harness-id" }, view.sessionId),
+      React6.createElement(
+        "span",
+        { className: "dshwb-harness-hint" },
+        tr("panel.harness.openHint", "点击打开这条会话")
+      )
+    );
+  } else if (view.kind === "unbound") {
+    body = React6.createElement(
+      "p",
+      { className: "dshwb-harness-hint" },
+      tr("panel.harness.unbound", "还没有绑定会话：在配置里选一条会话。")
+    );
+  } else if (view.kind === "missing") {
+    body = React6.createElement(
+      React6.Fragment,
+      null,
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-title" },
+        displayTitle(tr, view.title, view.sessionId)
+      ),
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-reason" },
+        tr("panel.harness.missing", "绑定的会话不存在或不可读；仍可按 id 尝试打开，或在配置里重新选一条。")
+      ),
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId),
+      openTarget !== null && openButton()
+    );
+  } else {
+    body = React6.createElement(
+      React6.Fragment,
+      null,
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-title" },
+        displayTitle(tr, view.title, view.sessionId)
+      ),
+      React6.createElement(
+        "p",
+        { className: "dshwb-harness-reason" },
+        tr("panel.harness.unavailable", "读不到外壳的会话列表，暂时无法显示会话状态；仍可按 id 尝试打开。")
+      ),
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId),
+      openTarget !== null && openButton()
+    );
+  }
+  return React6.createElement(
+    "div",
+    { className: "dshwb-harness" },
+    React6.createElement("style", { dangerouslySetInnerHTML: { __html: HARNESS_CSS } }),
+    view.kind === "bound" || view.kind === "unbound" ? body : React6.createElement("div", { className: "dshwb-harness-degraded" }, body),
+    openFailed && React6.createElement(
+      "p",
+      { className: "dshwb-harness-error", role: "alert" },
+      tr("panel.harness.openFailed", "打不开这条会话：外壳没有提供打开能力。")
+    )
+  );
+}
+
+// src/client/renderers/reserved.ts
+var React7 = __toESM(require("react"), 1);
+function textField(panel, key) {
+  const value = panel[key];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+function ReservedPanel(props) {
+  const { panel, tr } = props;
+  const text = textField(panel, "text") ?? tr("panel.reserved.placeholder", "占位面板，内容待补充");
+  return React7.createElement(
+    "div",
+    { className: "dshwb-reserved" },
+    React7.createElement("p", { className: "dshwb-reserved-text" }, text),
+    React7.createElement("p", { className: "dshwb-reserved-type" }, `type: ${panel.type}`)
+  );
+}
+
+// src/client/renderers/index.ts
+var RENDERERS = {
+  reserved: ReservedPanel,
+  harness: HarnessPanel
+};
+var PANEL_RENDERERS = RENDERERS;
+function panelRenderer(type) {
+  return Object.hasOwn(PANEL_RENDERERS, type) ? PANEL_RENDERERS[type] : void 0;
+}
+
+// src/client/renderers/unknown.ts
+var React8 = __toESM(require("react"), 1);
+function UnknownPanel(props) {
+  const { panel, tr } = props;
+  return React8.createElement(
+    "p",
+    { className: "dshwb-unknown" },
+    `${tr("panel.unknown", "未知面板类型")}: ${panel.type}`
+  );
+}
+
+// src/client/workbench-grid.ts
+var GRID_CSS = `
+.dshwb-grid-wrap{flex:1;min-height:0;width:100%;overflow:auto}
+.dshwb-grid{display:grid;gap:12px;width:100%;min-height:100%;grid-auto-rows:minmax(150px,1fr);align-content:stretch}
+.dshwb-panel{display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border:1px solid rgba(255,255,255,.13);border-radius:13px;background:rgba(9,15,26,.62);backdrop-filter:blur(12px);box-shadow:0 14px 36px rgba(0,0,0,.28);color:#eef3fb}
+.dshwb-panel-head{display:flex;align-items:flex-start;gap:8px;padding:10px 12px 8px;border-bottom:1px solid rgba(255,255,255,.09)}
+.dshwb-panel-index{flex:0 0 auto;padding-top:1px;color:rgba(169,206,255,.85);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px;letter-spacing:.06em}
+.dshwb-panel-heading{flex:1;min-width:0}
+.dshwb-panel-title{margin:0;overflow:hidden;font-size:13px;font-weight:600;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-panel-sub{margin:2px 0 0;overflow:hidden;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-panel-actions{display:flex;flex:0 0 auto;align-items:center;gap:6px}
+.dshwb-panel-type{padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.07);color:rgba(226,234,248,.6);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.6;white-space:nowrap}
+.dshwb-panel-warn{padding:2px 7px;border-radius:999px;background:rgba(255,196,84,.16);color:#ffd88e;font-size:10.5px;line-height:1.6;white-space:nowrap;cursor:help}
+.dshwb-panel-body{flex:1;min-height:0;overflow:auto;padding:11px 12px}
+.dshwb-reserved{display:flex;flex-direction:column;gap:6px}
+.dshwb-reserved-text{margin:0;color:rgba(226,234,248,.72);font-size:12.5px;line-height:1.65;white-space:pre-wrap;word-break:break-word}
+.dshwb-reserved-type{margin:0;color:rgba(226,234,248,.4);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11px}
+.dshwb-unknown{margin:0;color:rgba(226,234,248,.5);font-size:12.5px;line-height:1.65;word-break:break-word}
+.dshwb-grid-empty{margin:0;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.7}
+`;
+function WorkbenchGrid(props) {
+  const { workbench, tr, shell } = props;
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  return React9.createElement(
+    "div",
+    { className: "dshwb-grid-wrap" },
+    React9.createElement("style", { dangerouslySetInnerHTML: { __html: GRID_CSS } }),
+    workbench.panels.length === 0 ? React9.createElement(
+      "p",
+      { className: "dshwb-grid-empty" },
+      tr(
+        "panel.empty",
+        "这个工作台还没有子面板。在工作台 JSON 的 panels 里加一个，再点「刷新」。"
+      )
+    ) : React9.createElement(
+      "div",
+      {
+        className: "dshwb-grid",
+        style: { gridTemplateColumns: gridTemplateColumns(cols) }
+      },
+      workbench.panels.map(
+        (panel, index) => React9.createElement(PanelFrame, {
+          key: panel.id,
+          panel,
+          index,
+          cols,
+          tr,
+          shell
+        })
+      )
+    )
+  );
+}
+function PanelFrame(props) {
+  const { panel, index, cols, tr, shell } = props;
+  const issues = panelBoundsIssues(panel, cols);
+  const issuesText = issues.join("；");
+  const ordinal = panelIndexLabel(index + 1);
+  React9.useEffect(() => {
+    if (issuesText === "") return;
+    console.warn(`[workbench] 子面板 ${ordinal}「${panel.title}」坐标越界：${issuesText}`);
+  }, [issuesText, ordinal, panel.title]);
+  const Renderer = panelRenderer(panel.type);
+  return React9.createElement(
+    "article",
+    {
+      className: "dshwb-panel",
+      style: { ...panelGridPlacement(panel) },
+      "data-panel-id": panel.id,
+      "data-panel-type": panel.type
+    },
+    React9.createElement(
+      "header",
+      { className: "dshwb-panel-head" },
+      React9.createElement("span", { className: "dshwb-panel-index" }, ordinal),
+      React9.createElement(
+        "div",
+        { className: "dshwb-panel-heading" },
+        React9.createElement("h3", { className: "dshwb-panel-title", title: panel.title }, panel.title),
+        panel.sub !== void 0 && panel.sub.trim() !== "" && React9.createElement("p", { className: "dshwb-panel-sub", title: panel.sub }, panel.sub)
+      ),
+      React9.createElement(
+        "div",
+        { className: "dshwb-panel-actions" },
+        issuesText !== "" && React9.createElement(
+          "span",
+          { className: "dshwb-panel-warn", title: issuesText },
+          tr("panel.outOfBounds", "坐标越界")
+        ),
+        React9.createElement("span", { className: "dshwb-panel-type" }, panel.type)
+      )
+    ),
+    React9.createElement(
+      "div",
+      { className: "dshwb-panel-body" },
+      Renderer === void 0 ? React9.createElement(UnknownPanel, { panel, tr }) : React9.createElement(Renderer, { panel, tr, shell })
+    )
+  );
+}
+
+// src/client/workbench-draft.ts
+function nextPanelId(panels) {
+  const taken = new Set(panels.map((panel) => panel.id));
+  let index = 1;
+  while (taken.has(`panel-${index}`)) index += 1;
+  return `panel-${index}`;
+}
+function createPanel(type, panels, title) {
+  return { id: nextPanelId(panels), title, type, ...panelDefaultFields(type) };
+}
+function createWorkbench(id, name2, panelTitle) {
+  return {
+    id,
+    name: name2,
+    cols: DEFAULT_COLS,
+    panels: [createPanel("reserved", [], panelTitle)]
+  };
+}
+function withPanels(workbench, panels) {
+  return { ...workbench, panels };
+}
+function addPanel(workbench, type, title) {
+  return withPanels(workbench, [...workbench.panels, createPanel(type, workbench.panels, title)]);
+}
+function removePanel(workbench, id) {
+  const panels = workbench.panels.filter((panel) => panel.id !== id);
+  return panels.length === workbench.panels.length ? workbench : withPanels(workbench, panels);
+}
+function movePanel(workbench, id, delta) {
+  const from = workbench.panels.findIndex((panel) => panel.id === id);
+  if (from === -1) return workbench;
+  const to = from + delta;
+  if (to < 0 || to >= workbench.panels.length) return workbench;
+  const panels = [...workbench.panels];
+  const [moved] = panels.splice(from, 1);
+  panels.splice(to, 0, moved);
+  return withPanels(workbench, panels);
+}
+function updatePanel(workbench, id, patch) {
+  const index = workbench.panels.findIndex((panel) => panel.id === id);
+  if (index === -1) return workbench;
+  const next = { ...workbench.panels[index], ...patch };
+  for (const key of Object.keys(patch)) {
+    if (patch[key] === void 0) delete next[key];
+  }
+  const panels = [...workbench.panels];
+  panels[index] = next;
+  return withPanels(workbench, panels);
+}
+function updateWorkbench(workbench, patch) {
+  const next = { ...workbench, ...patch };
+  for (const key of Object.keys(patch)) {
+    if (patch[key] === void 0) delete next[key];
+  }
+  return next;
+}
+function changePanelType(workbench, id, type) {
+  const current = workbench.panels.find((panel) => panel.id === id);
+  if (current === void 0 || current.type === type) return workbench;
+  const next = { ...current, type };
+  for (const [key, value] of Object.entries(panelDefaultFields(type))) {
+    if (next[key] === void 0) next[key] = value;
+  }
+  return updatePanel(workbench, id, next);
+}
+
+// src/client/workbench-status.ts
+var WORKBENCH_STATUS_LABEL_KEYS = {
+  adopted: "list.status.adopted",
+  missing: "list.status.missing",
+  corrupt: "list.status.corrupt"
+};
+var WORKBENCH_STATUS_HINT_KEYS = {
+  adopted: "list.status.adopted.hint",
+  missing: "list.status.missing.hint",
+  corrupt: "list.status.corrupt.hint"
+};
+function isOpenable(entry) {
+  return entry.status === "ok" || entry.status === "adopted";
+}
+function workbenchStatusLabel(tr, status) {
+  if (status === "ok") return "";
+  return tr(WORKBENCH_STATUS_LABEL_KEYS[status], status);
+}
+function workbenchOptionLabel(tr, entry) {
+  const name2 = entry.name.trim() === "" ? entry.id : entry.name;
+  const label = workbenchStatusLabel(tr, entry.status);
+  return label === "" ? name2 : `${name2} · ${label}`;
+}
+
+// src/client/workbench-editor.ts
+var AUTOSAVE_DELAY_MS = 300;
+var WORKBENCH_EDITOR_CSS = `
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-body{display:flex;flex:1;min-height:0;gap:12px;position:relative}
+.dshwb-workbench-body>.dshwb-grid-wrap{flex:1;min-width:0}
+.dshwb-save-status{flex:0 0 auto;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap}
+.dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:#ffb4a8;font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
+.dshwb-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dshwb-confirm-text{flex:0 1 auto;max-width:260px;color:#ffb4a8;font-size:11.5px;line-height:1.5}
+`;
+function WorkbenchEditor(props) {
+  const { tr, client } = props;
+  const [workbench, setWorkbench] = React10.useState(props.workbench);
+  const [lastSaved, setLastSaved] = React10.useState(props.workbench);
+  const [saveError, setSaveError] = React10.useState(null);
+  const [saving, setSaving] = React10.useState(false);
+  const [drawerOpen, setDrawerOpen] = React10.useState(props.defaultDrawerOpen === true);
+  const [confirmingDelete, setConfirmingDelete] = React10.useState(false);
+  const [deleting, setDeleting] = React10.useState(false);
+  const [actionError, setActionError] = React10.useState(null);
+  const [selectedPanelId, setSelectedPanelId] = React10.useState(
+    props.workbench.panels[0]?.id ?? null
+  );
+  const workbenchRef = React10.useRef(workbench);
+  workbenchRef.current = workbench;
+  const lastSavedRef = React10.useRef(lastSaved);
+  lastSavedRef.current = lastSaved;
+  const retryWorkbenchRef = React10.useRef(null);
+  const timerRef = React10.useRef(null);
+  const seqRef = React10.useRef(0);
+  const deletingRef = React10.useRef(false);
+  const inFlightRef = React10.useRef(null);
+  const clearTimer = React10.useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+  const flush = React10.useCallback(() => {
+    clearTimer();
+    const target = workbenchRef.current;
+    if (target === lastSavedRef.current) return Promise.resolve(true);
+    const seq = seqRef.current + 1;
+    seqRef.current = seq;
+    setSaving(true);
+    const run = (async () => {
+      try {
+        const saved = (await client.save(target)).workbench;
+        if (seq !== seqRef.current) return true;
+        lastSavedRef.current = saved;
+        setLastSaved(saved);
+        retryWorkbenchRef.current = null;
+        setSaveError(null);
+        if (workbenchRef.current === target) {
+          workbenchRef.current = saved;
+          setWorkbench(saved);
+        }
+        return true;
+      } catch (error) {
+        if (seq !== seqRef.current) return false;
+        setSaveError(describeError(error));
+        retryWorkbenchRef.current = target;
+        workbenchRef.current = lastSavedRef.current;
+        setWorkbench(lastSavedRef.current);
+        return false;
+      } finally {
+        if (seq === seqRef.current) setSaving(false);
+      }
+    })();
+    inFlightRef.current = run;
+    void run.finally(() => {
+      if (inFlightRef.current === run) inFlightRef.current = null;
+    });
+    return run;
+  }, [clearTimer, client]);
+  React10.useEffect(() => {
+    if (workbench === lastSaved) return;
+    clearTimer();
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      void flush();
+    }, AUTOSAVE_DELAY_MS);
+    return clearTimer;
+  }, [workbench, lastSaved, clearTimer, flush]);
+  React10.useEffect(
+    () => () => {
+      clearTimer();
+      if (deletingRef.current) return;
+      const pending = workbenchRef.current;
+      if (pending !== lastSavedRef.current) {
+        void client.save(pending).catch(() => void 0);
+      }
+    },
+    [clearTimer, client]
+  );
+  const propWorkbenchRef = React10.useRef(props.workbench);
+  React10.useEffect(() => {
+    const next = props.workbench;
+    if (next === propWorkbenchRef.current) return;
+    propWorkbenchRef.current = next;
+    workbenchRef.current = next;
+    lastSavedRef.current = next;
+    retryWorkbenchRef.current = null;
+    setWorkbench(next);
+    setLastSaved(next);
+    setSaveError(null);
+  }, [props.workbench]);
+  React10.useEffect(() => {
+    if (selectedPanelId !== null && workbench.panels.some((panel) => panel.id === selectedPanelId)) {
+      return;
+    }
+    setSelectedPanelId(workbench.panels[0]?.id ?? null);
+  }, [workbench.panels, selectedPanelId]);
+  const handleBack = () => {
+    void flush().then((saved) => {
+      if (saved) props.onBack();
+    });
+  };
+  const handleReload = () => {
+    void flush().then((saved) => {
+      if (saved) {
+        props.shell?.refresh();
+        props.onReload();
+      }
+    });
+  };
+  const switchTo = (id) => {
+    if (id === workbenchRef.current.id) return;
+    setActionError(null);
+    void flush().then((saved) => {
+      if (saved) props.onSwitch(id);
+    });
+  };
+  const setDrawer = (open) => {
+    setDrawerOpen(open);
+    props.onDrawerChange?.(open);
+  };
+  const deleteWorkbench = async () => {
+    if (deletingRef.current) return;
+    const id = workbenchRef.current.id;
+    setDeleting(true);
+    setActionError(null);
+    setSaveError(null);
+    retryWorkbenchRef.current = null;
+    deletingRef.current = true;
+    clearTimer();
+    if (inFlightRef.current !== null) await inFlightRef.current;
+    try {
+      await client.delete(id);
+      workbenchRef.current = lastSavedRef.current;
+      setConfirmingDelete(false);
+      await props.onDeleted(id);
+    } catch (error) {
+      deletingRef.current = false;
+      setActionError(describeError(error));
+    } finally {
+      setDeleting(false);
+    }
+  };
+  const retrySave = () => {
+    const target = retryWorkbenchRef.current;
+    if (target === null) return;
+    setSaveError(null);
+    setWorkbench(target);
+  };
+  const onWorkbenchChange = (patch) => {
+    setWorkbench((current) => updateWorkbench(current, patch));
+  };
+  const onAddPanel = (type) => {
+    const next = addPanel(workbenchRef.current, type, panelTypeTitle(tr, type));
+    const added = next.panels[next.panels.length - 1];
+    if (added !== void 0) setSelectedPanelId(added.id);
+    setWorkbench(next);
+  };
+  const onDeletePanel = (id) => {
+    setWorkbench((current) => removePanel(current, id));
+  };
+  const onMovePanel = (id, delta) => {
+    setWorkbench((current) => movePanel(current, id, delta));
+  };
+  const onPanelChange = (id, patch) => {
+    setWorkbench((current) => updatePanel(current, id, patch));
+  };
+  const onPanelTypeChange = (id, type) => {
+    setWorkbench((current) => changePanelType(current, id, type));
+  };
+  const cols = workbench.cols ?? DEFAULT_COLS;
+  const status = workbench === lastSaved ? tr("save.saved", "已保存") : saving ? tr("save.saving", "保存中…") : tr("save.pending", "待保存");
+  return React10.createElement(
+    "div",
+    { className: "dshwb-workbench" },
+    React10.createElement("style", { dangerouslySetInnerHTML: { __html: WORKBENCH_EDITOR_CSS } }),
+    React10.createElement(
+      "div",
+      { className: "dshwb-workbench-bar" },
+      React10.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: handleBack },
+        `← ${tr("workbench.back", "返回列表")}`
+      ),
+      React10.createElement(
+        "select",
+        {
+          className: "dshwb-switch",
+          "aria-label": tr("bar.switch", "切换工作台"),
+          title: tr("bar.switch", "切换工作台"),
+          value: workbench.id,
+          disabled: deleting,
+          onChange: (event) => switchTo(event.target.value)
+        },
+        props.entries.map(
+          (entry) => React10.createElement(
+            "option",
+            { key: entry.id, value: entry.id },
+            workbenchOptionLabel(tr, entry)
+          )
+        )
+      ),
+      React10.createElement(
+        "div",
+        { className: "dshwb-workbench-heading" },
+        React10.createElement(
+          "h2",
+          { className: "dshwb-workbench-name", title: workbench.name },
+          workbench.name.trim() === "" ? workbench.id : workbench.name
+        ),
+        React10.createElement("span", { className: "dshwb-workbench-id", title: workbench.id }, workbench.id)
+      ),
+      React10.createElement(
+        "span",
+        { className: "dshwb-workbench-meta" },
+        `${cols} ${tr("workbench.colsUnit", "列")} · ${workbench.panels.length} ${tr("workbench.panelsUnit", "个子面板")}`
+      ),
+      saveError !== null && React10.createElement(
+        "span",
+        { className: "dshwb-save-error", role: "alert", title: saveError },
+        `${tr("save.errorPrefix", "保存失败：")}${saveError}`
+      ),
+      saveError !== null && React10.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: retrySave },
+        tr("save.retry", "重试")
+      ),
+      saveError === null && React10.createElement("span", { className: "dshwb-save-status" }, status),
+      actionError !== null && React10.createElement(
+        "span",
+        { className: "dshwb-save-error", role: "alert", title: actionError },
+        actionError
+      ),
+      React10.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: handleReload },
+        tr("workbench.refresh", "刷新")
+      ),
+      confirmingDelete ? React10.createElement(
+        React10.Fragment,
+        null,
+        React10.createElement(
+          "span",
+          { className: "dshwb-confirm-text" },
+          tr("bar.deleteConfirm", "删除这个工作台？目录与索引登记都会移除，无法撤销。")
+        ),
+        React10.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-link dshwb-link-danger",
+            disabled: deleting,
+            onClick: () => void deleteWorkbench()
+          },
+          deleting ? tr("bar.deleting", "删除中…") : tr("bar.confirmDelete", "确认删除")
+        ),
+        React10.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-link",
+            disabled: deleting,
+            onClick: () => setConfirmingDelete(false)
+          },
+          tr("bar.cancelDelete", "取消")
+        )
+      ) : React10.createElement(
+        "button",
+        {
+          type: "button",
+          className: "dshwb-link dshwb-link-danger",
+          onClick: () => {
+            setActionError(null);
+            setConfirmingDelete(true);
+          }
+        },
+        tr("bar.delete", "删除工作台")
+      ),
+      React10.createElement(
+        "button",
+        { type: "button", className: "dshwb-primary", onClick: props.onCreateWorkbench },
+        tr("bar.new", "新建工作台")
+      ),
+      React10.createElement(
+        "button",
+        {
+          type: "button",
+          className: "dshwb-secondary",
+          onClick: () => setDrawer(!drawerOpen)
+        },
+        drawerOpen ? tr("drawer.hide", "收起配置") : tr("drawer.show", "配置")
+      )
+    ),
+    workbench.description !== void 0 && workbench.description.trim() !== "" && React10.createElement("p", { className: "dshwb-workbench-desc" }, workbench.description),
+    React10.createElement(
+      "div",
+      { className: "dshwb-workbench-body" },
+      React10.createElement(WorkbenchGrid, { workbench, tr, shell: props.shell }),
+      drawerOpen && React10.createElement(ConfigDrawer, {
+        workbench,
+        selectedPanelId,
+        tr,
+        shell: props.shell,
+        onClose: () => setDrawer(false),
+        onWorkbenchChange,
+        onSelectPanel: setSelectedPanelId,
+        onAddPanel,
+        onDeletePanel,
+        onMovePanel,
+        onPanelChange,
+        onPanelTypeChange
+      })
+    )
+  );
+}
+
+// src/client/workbench-session.ts
+var LAST_WORKBENCH_KEY = "dsh-hello-word:last-workbench";
+function browserStorage() {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+function readLastWorkbench(store) {
+  if (store === null) return null;
+  try {
+    const raw = store.getItem(LAST_WORKBENCH_KEY);
+    if (typeof raw !== "string") return null;
+    const id = raw.trim();
+    return id === "" ? null : id;
+  } catch {
+    return null;
+  }
+}
+function writeLastWorkbench(store, id) {
+  if (store === null || id === "") return;
+  try {
+    store.setItem(LAST_WORKBENCH_KEY, id);
+  } catch {
+  }
+}
+function clearLastWorkbench(store) {
+  if (store === null) return;
+  try {
+    store.removeItem(LAST_WORKBENCH_KEY);
+  } catch {
+  }
+}
+function pickWorkbenchAfterDelete(before, after, deletedId) {
+  const openable = after.filter(isOpenable);
+  if (openable.length === 0) return null;
+  const deletedIndex = before.findIndex((entry) => entry.id === deletedId);
+  if (deletedIndex === -1) return openable[0].id;
+  const preceding = before.slice(0, deletedIndex).filter(isOpenable).length;
+  return (openable[preceding] ?? openable[openable.length - 1]).id;
+}
+
+// src/client/workbench.ts
+var PANEL_ID = "hello-word";
 var PANEL_CSS = `
-.dshwb-content{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px}
-.dshwb-stack{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:440px;text-align:center}
+/* 面板画布是固定的深色 hero（HERO_BASE），不随外壳深浅主题翻转。
+   这里把按钮依赖的别名 token 锁成深色主题的取值，浅色外壳下按钮仍然
+   亮字深底；静态色板 token 与主题无关，所以切主题不会反转按钮。 */
+.dshwb-panel-root{--dsw-alias-button-primary-fill:var(--dsw-static-neutral-bluish-50,#f9fafb);--dsw-alias-button-primary-hover:var(--dsw-static-neutral-bluish-100,#ebeef2);--dsw-alias-label-primary-foreground:var(--dsw-static-neutral-bluish-1000,#0f1115);--dsw-alias-label-primary:var(--dsw-static-neutral-bluish-50,#f9fafb);--dsw-alias-label-secondary:var(--dsw-static-neutral-bluish-300,#cfd3d6);--dsw-alias-label-tertiary:var(--dsw-static-neutral-bluish-400,#adb2b8);--dsw-alias-border-l3:#ffffff29;--dsw-alias-interactive-bg-hover:#ffffff14;--dsw-alias-interactive-bg-active:#ffffff24;--dsw-alias-interactive-bg-hover-danger:#f25a5a26;--dsw-alias-state-error-primary:var(--dsw-static-red-400,#f25a5a);--dsw-alias-state-error-secondary:var(--dsw-static-red-400,#f25a5a);--dsw-alias-state-business-primary:var(--dsw-static-deepseek-400,#7aaaff)}
+.dshwb-content{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+.dshwb-stack{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:520px;text-align:center}
 .dshwb-hint{margin:0;color:#eef3fb;font-size:17px;font-weight:500;letter-spacing:.02em}
 .dshwb-sub{margin:0;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.7}
-.dshwb-created-name{margin:0;color:#eef3fb;font-size:24px;font-weight:600;letter-spacing:.02em;word-break:break-word}
-.dshwb-primary{display:inline-flex;align-items:center;justify-content:center;margin-top:8px;padding:9px 20px;border:1px solid transparent;border-radius:10px;background:var(--dsw-alias-brand-primary);color:#fff;font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:filter .15s ease,transform .15s ease}
-.dshwb-primary:hover{filter:brightness(1.08)}
-.dshwb-primary:active{transform:translateY(1px)}
-.dshwb-primary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.dshwb-primary:disabled{opacity:.45;cursor:not-allowed;filter:none;transform:none}
-.dshwb-secondary{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:background .15s ease}
-.dshwb-secondary:hover{background:var(--dsw-alias-bg-layer-2)}
-.dshwb-secondary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.dshwb-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,16,.58)}
-.dshwb-dialog{box-sizing:border-box;width:360px;max-width:100%;padding:20px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);box-shadow:0 24px 70px rgba(0,0,0,.5);text-align:left}
-.dshwb-dialog-title{margin:0 0 4px;font-size:15px;font-weight:600;line-height:1.4}
-.dshwb-dialog-sub{margin:0 0 14px;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.6}
-.dshwb-label{display:block;margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:12px}
-.dshwb-input{box-sizing:border-box;width:100%;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
+.dshwb-card{box-sizing:border-box;width:100%;padding:18px 18px 16px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.62);backdrop-filter:blur(14px);color:#eef3fb;text-align:left;box-shadow:0 18px 48px rgba(0,0,0,.35)}
+.dshwb-card-title{margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.4}
+.dshwb-card-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
+.dshwb-label{display:block;margin:0 0 6px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-pickrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
+.dshwb-picksep{color:rgba(226,234,248,.45);font-size:11.5px;line-height:1.5}
+.dshwb-notice{margin:8px 0 0;color:#ffd88e;font-size:12px;line-height:1.6}
+.dshwb-input{box-sizing:border-box;width:100%;padding:9px 10px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
 .dshwb-input:focus{border-color:var(--dsw-alias-brand-primary)}
-.dshwb-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-.dshwb-actions .dshwb-primary{margin-top:0}
+.dshwb-input::placeholder{color:rgba(226,234,248,.4)}
+.dshwb-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.dshwb-primary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border:1px solid transparent;border-radius:var(--dsw-radius-md);background:var(--dsw-alias-button-primary-fill);color:var(--dsw-alias-label-primary-foreground);font-family:inherit;font-size:var(--dsw-font-s-14-font-size);font-weight:500;line-height:var(--dsw-font-s-14-line-height);white-space:nowrap;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-primary:hover:not(:disabled){background:var(--dsw-alias-button-primary-hover)}
+.dshwb-primary:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-primary:disabled{opacity:.4;cursor:not-allowed}
+.dshwb-secondary{box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;height:36px;padding:0 14px;border:.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-md);background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:var(--dsw-font-s-14-font-size);font-weight:500;line-height:var(--dsw-font-s-14-line-height);white-space:nowrap;cursor:pointer;transition:background-color var(--ds-transition-duration) var(--ds-ease-in-out),border-color var(--ds-transition-duration) var(--ds-ease-in-out),color var(--ds-transition-duration) var(--ds-ease-in-out),opacity var(--ds-transition-duration) var(--ds-ease-in-out)}
+.dshwb-secondary:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
+.dshwb-secondary:active:not(:disabled){background:var(--dsw-alias-interactive-bg-active)}
+.dshwb-secondary:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px}
+.dshwb-secondary:disabled{opacity:.4;cursor:not-allowed}
+.dshwb-link{height:auto;padding:0;border:0;background:none;color:var(--dsw-alias-label-secondary);font-family:inherit;font-size:12px;font-weight:400;line-height:1.4;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dshwb-link:hover:not(:disabled){color:var(--dsw-alias-label-primary)}
+.dshwb-link:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:2px;border-radius:4px}
+.dshwb-link:disabled{opacity:.4;cursor:not-allowed}
+.dshwb-error{margin:10px 0 0;color:#ffb4a8;font-size:12.5px;line-height:1.6;word-break:break-word}
+.dshwb-root-bar{display:flex;align-items:center;gap:10px;width:100%;margin-bottom:10px;text-align:left}
+.dshwb-root-path{flex:1;min-width:0;overflow:hidden;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-list{display:flex;flex-direction:column;gap:8px;width:100%;margin:0;padding:0;list-style:none;text-align:left}
+.dshwb-item{display:flex;align-items:center;gap:10px;box-sizing:border-box;width:100%;padding:11px 13px;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:rgba(255,255,255,.05);color:inherit;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.dshwb-item:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
+.dshwb-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dshwb-item-chevron{flex:0 0 auto;color:rgba(226,234,248,.45);font-size:15px;line-height:1}
+.dshwb-row{display:flex;flex-direction:column;gap:6px;width:100%}
+.dshwb-item-static{cursor:default}
+.dshwb-item-static:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12)}
+.dshwb-row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 6px 2px}
+.dshwb-row-confirm{color:#ffd88e;font-size:11.5px;line-height:1.5}
+.dshwb-content-workbench{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
+.dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
+.dshwb-workbench-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
+.dshwb-workbench-heading{display:flex;flex:1;min-width:0;align-items:baseline;gap:8px}
+.dshwb-workbench-name{margin:0;overflow:hidden;color:#eef3fb;font-size:15px;font-weight:600;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-id{overflow:hidden;max-width:40%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-workbench-meta{flex:0 0 auto;color:rgba(226,234,248,.55);font-size:11.5px;white-space:nowrap}
+.dshwb-workbench-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
+.dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.dshwb-item-headline{display:flex;align-items:center;gap:8px;min-width:0}
+.dshwb-item-hint{color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.5;text-align:left}
+.dshwb-badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:1.6;white-space:nowrap}
+.dshwb-badge-adopted{background:rgba(86,160,255,.18);color:#a9ceff}
+.dshwb-badge-missing{background:rgba(255,196,84,.16);color:#ffd88e}
+.dshwb-badge-corrupt{background:rgba(255,112,96,.18);color:#ffb4a8}
+.dshwb-link-danger{color:var(--dsw-alias-state-error-primary)}
+.dshwb-link-danger:hover:not(:disabled){color:var(--dsw-alias-state-error-secondary)}
+.dshwb-loading{margin:0;color:rgba(226,234,248,.62);font-size:12.5px}
+.dshwb-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(4,9,18,.6);backdrop-filter:blur(3px)}
+.dshwb-dialog{box-sizing:border-box;width:100%;max-width:420px;padding:18px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.94);box-shadow:0 24px 60px rgba(0,0,0,.45);color:#eef3fb}
+.dshwb-dialog-title{margin:0 0 6px;font-size:16px;font-weight:600;line-height:1.4}
+.dshwb-dialog-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
+.dshwb-dialog-hint{margin:6px 0 0;color:rgba(226,234,248,.5);font-size:11.5px;line-height:1.6}
+.dshwb-label-spaced{margin-top:12px}
+.dshwb-idrow{display:flex;align-items:center;gap:8px}
+.dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
 `;
-var rememberedWorkbench = null;
 function HelloPanel(props) {
   const translate = props.t;
-  const tr = (key, fallback) => {
-    if (typeof translate !== "function") return fallback;
-    const value = translate(key);
-    return value === key ? fallback : value;
+  const tr = React11.useCallback(
+    (key, fallback) => {
+      if (typeof translate !== "function") return fallback;
+      const value = translate(key);
+      return value === key ? fallback : value;
+    },
+    [translate]
+  );
+  const rpc = props.rpc;
+  const [state, setState] = React11.useState({ phase: "loading" });
+  const [attempt, setAttempt] = React11.useState(0);
+  const [editingRoot, setEditingRoot] = React11.useState(false);
+  const [pathDraft, setPathDraft] = React11.useState("");
+  const [savingRoot, setSavingRoot] = React11.useState(false);
+  const [picking, setPicking] = React11.useState(false);
+  const [pickFallback, setPickFallback] = React11.useState(null);
+  const [saveError, setSaveError] = React11.useState(null);
+  const [view, setView] = React11.useState({ kind: "list" });
+  const [creating, setCreating] = React11.useState(false);
+  const [drawerOpen, setDrawerOpen] = React11.useState(false);
+  const [confirmingCleanupId, setConfirmingCleanupId] = React11.useState(null);
+  const [cleaningUp, setCleaningUp] = React11.useState(false);
+  const [cleanupError, setCleanupError] = React11.useState(null);
+  const storage = React11.useMemo(() => browserStorage(), []);
+  const viewRef = React11.useRef(view);
+  viewRef.current = view;
+  const restoredRef = React11.useRef(false);
+  const takenIds = React11.useMemo(
+    () => state.phase === "ready" ? state.entries.map((entry) => entry.id) : [],
+    [state]
+  );
+  const openCreate = () => setCreating(true);
+  const createAndOpenWorkbench = async (name2, id) => {
+    if (rpc === void 0) {
+      throw new WorkbenchRpcError("internal", tr("error.connection", "连接服务不可用，请稍后重试"));
+    }
+    const workbench = createWorkbench(id, name2, tr("panel.new.reserved", "占位面板"));
+    const saved = (await rpc.save(workbench)).workbench;
+    const list = await rpc.list();
+    setState({ phase: "ready", root: list.root, entries: list.entries });
+    setCreating(false);
+    writeLastWorkbench(storage, saved.id);
+    setDrawerOpen(true);
+    setView({ kind: "workbench", workbench: saved, configure: true });
   };
-  const [workbench, setWorkbench] = React.useState(() => rememberedWorkbench);
-  const [dialogOpen, setDialogOpen] = React.useState(false);
-  const [draftName, setDraftName] = React.useState("");
-  const triggerRef = React.useRef(null);
-  const inputRef = React.useRef(null);
-  const closeDialog = React.useCallback(() => {
-    setDialogOpen(false);
-    window.requestAnimationFrame(() => triggerRef.current?.focus());
-  }, []);
-  const openDialog = React.useCallback(() => {
-    setDraftName("");
-    setDialogOpen(true);
-  }, []);
-  React.useEffect(() => {
-    if (!dialogOpen) return void 0;
-    const input = inputRef.current;
-    input?.focus();
-    const onKeyDown = (event) => {
-      if (event.key !== "Escape" || event.shiftKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      closeDialog();
-    };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [dialogOpen, closeDialog]);
-  const createWorkbench = () => {
-    const next = draftName.trim();
-    if (next === "") return;
-    rememberedWorkbench = next;
-    setWorkbench(next);
-    closeDialog();
+  const load = React11.useCallback(async () => {
+    if (rpc === void 0) {
+      setState({ phase: "error", message: tr("error.connection", "连接服务不可用，请稍后重试") });
+      return;
+    }
+    setView({ kind: "list" });
+    setState({ phase: "loading" });
+    try {
+      const config = await rpc.getRootConfig();
+      if (config.root === null) {
+        setState({ phase: "no-root" });
+        return;
+      }
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+    } catch (error) {
+      setState({ phase: "error", message: describeError(error) });
+    }
+  }, [rpc, tr]);
+  React11.useEffect(() => {
+    void load();
+  }, [load, attempt]);
+  const openWorkbench = async (id) => {
+    if (rpc === void 0) return;
+    setView({ kind: "opening", id });
+    try {
+      const { workbench } = await rpc.read(id);
+      setView({ kind: "workbench", workbench });
+      writeLastWorkbench(storage, id);
+      setState(
+        (current) => current.phase === "ready" ? {
+          phase: "ready",
+          root: current.root,
+          entries: current.entries.map(
+            (entry) => entry.id === id && entry.status === "adopted" ? { ...entry, status: "ok" } : entry
+          )
+        } : current
+      );
+    } catch (error) {
+      setView({ kind: "open-error", id, message: describeError(error) });
+    }
   };
-  const canCreate = draftName.trim() !== "";
-  const empty = workbench === null;
-  return React.createElement(
+  const cleanupEntry = async (id) => {
+    if (rpc === void 0 || cleaningUp) return;
+    setCleaningUp(true);
+    setCleanupError(null);
+    try {
+      await rpc.delete(id);
+      setConfirmingCleanupId(null);
+      if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+    } catch (error) {
+      setCleanupError(describeError(error));
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+  const refresh = async () => {
+    if (rpc === void 0) return;
+    try {
+      const config = await rpc.getRootConfig();
+      if (config.root === null) {
+        setView({ kind: "list" });
+        setState({ phase: "no-root" });
+        return;
+      }
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+      const current = viewRef.current;
+      if (current.kind !== "workbench") return;
+      try {
+        const { workbench } = await rpc.read(current.workbench.id);
+        setView({ kind: "workbench", workbench });
+      } catch (error) {
+        setView({ kind: "open-error", id: current.workbench.id, message: describeError(error) });
+      }
+    } catch (error) {
+      setState({ phase: "error", message: describeError(error) });
+    }
+  };
+  React11.useEffect(() => {
+    if (restoredRef.current || state.phase !== "ready") return;
+    restoredRef.current = true;
+    const last = readLastWorkbench(storage);
+    if (last === null) return;
+    const entry = state.entries.find((candidate) => candidate.id === last);
+    if (entry === void 0 || !isOpenable(entry)) return;
+    void openWorkbench(last);
+  }, [state, storage, openWorkbench]);
+  const handleDeleted = async (id) => {
+    if (rpc === void 0) return;
+    const before = state.phase === "ready" ? state.entries : [];
+    if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+    try {
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+      const next = pickWorkbenchAfterDelete(before, list.entries, id);
+      if (next === null) {
+        setView({ kind: "list" });
+        return;
+      }
+      await openWorkbench(next);
+    } catch (error) {
+      setState({ phase: "error", message: describeError(error) });
+    }
+  };
+  const startEditing = (prefill) => {
+    setPathDraft(prefill);
+    setSaveError(null);
+    setPickFallback(null);
+    setEditingRoot(true);
+  };
+  const saveRoot = async (pathInput) => {
+    if (rpc === void 0) return;
+    const path = (pathInput ?? pathDraft).trim();
+    if (path === "") {
+      setSaveError(tr("root.needPath", "请先填写文件夹路径"));
+      return;
+    }
+    setSavingRoot(true);
+    setSaveError(null);
+    try {
+      await rpc.setRoot(path);
+      setEditingRoot(false);
+      setPathDraft("");
+      setPickFallback(null);
+      setAttempt((value) => value + 1);
+    } catch (error) {
+      setSaveError(describeError(error));
+    } finally {
+      setSavingRoot(false);
+    }
+  };
+  const chooseRoot = async () => {
+    if (rpc === void 0) return;
+    setPicking(true);
+    setPickFallback(null);
+    setSaveError(null);
+    try {
+      const outcome = await requestRootPick(rpc);
+      if (outcome.kind === "picked") {
+        setPathDraft(outcome.path);
+        await saveRoot(outcome.path);
+      } else if (outcome.kind === "fallback") {
+        setPickFallback(outcome.reason);
+      }
+    } finally {
+      setPicking(false);
+    }
+  };
+  const renderRootForm = () => {
+    const busy = savingRoot || picking;
+    const typedPath = pathDraft.trim() !== "";
+    return React11.createElement(
+      "div",
+      { className: "dshwb-card" },
+      React11.createElement("h2", { className: "dshwb-card-title" }, tr("root.title", "设置工作台根目录")),
+      React11.createElement(
+        "p",
+        { className: "dshwb-card-sub" },
+        tr("root.sub", "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。")
+      ),
+      // Prefer the shell's OS folder chooser; the manual input below is the
+      // fallback (always present, so a failed chooser never blocks the setup).
+      React11.createElement(
+        "div",
+        { className: "dshwb-pickrow" },
+        React11.createElement(
+          "button",
+          {
+            type: "button",
+            className: typedPath ? "dshwb-secondary" : "dshwb-primary",
+            disabled: busy,
+            onClick: () => void chooseRoot()
+          },
+          picking ? tr("root.picking", "正在打开选择框…") : tr("root.pick", "选择文件夹…")
+        ),
+        React11.createElement(
+          "span",
+          { className: "dshwb-picksep" },
+          tr("root.pick.or", "或手动填写路径")
+        )
+      ),
+      React11.createElement(
+        "label",
+        { className: "dshwb-label", htmlFor: "dshwb-root-input" },
+        tr("root.label", "根目录路径")
+      ),
+      React11.createElement("input", {
+        id: "dshwb-root-input",
+        className: "dshwb-input",
+        type: "text",
+        value: pathDraft,
+        placeholder: tr("root.placeholder", "例如：D:\\work\\my-workbenches"),
+        autoComplete: "off",
+        spellCheck: false,
+        disabled: busy,
+        onChange: (event) => setPathDraft(event.target.value),
+        onKeyDown: (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          void saveRoot();
+        }
+      }),
+      pickFallback !== null && React11.createElement(
+        "p",
+        { className: "dshwb-notice", role: "status" },
+        pickFallback === "picker-unavailable" ? tr("root.pick.unavailable", "系统文件夹选择框不可用，请直接填写下面的路径。") : tr("root.pick.failed", "系统文件夹选择框打不开，请直接填写下面的路径。")
+      ),
+      saveError !== null && React11.createElement("p", { className: "dshwb-error", role: "alert" }, saveError),
+      React11.createElement(
+        "div",
+        { className: "dshwb-actions" },
+        editingRoot && React11.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-secondary",
+            disabled: busy,
+            onClick: () => {
+              setEditingRoot(false);
+              setSaveError(null);
+              setPickFallback(null);
+            }
+          },
+          tr("root.cancel", "取消")
+        ),
+        React11.createElement(
+          "button",
+          {
+            type: "button",
+            className: typedPath ? "dshwb-primary" : "dshwb-secondary",
+            disabled: busy,
+            onClick: () => void saveRoot()
+          },
+          savingRoot ? tr("root.saving", "校验中…") : tr("root.save", "保存并继续")
+        )
+      )
+    );
+  };
+  const renderList = (root, entries) => React11.createElement(
+    React11.Fragment,
+    null,
+    React11.createElement(
+      "div",
+      { className: "dshwb-root-bar" },
+      React11.createElement("span", { className: "dshwb-root-path", title: root }, root),
+      React11.createElement(
+        "button",
+        { type: "button", className: "dshwb-primary", onClick: openCreate },
+        tr("bar.new", "新建工作台")
+      ),
+      React11.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: () => setAttempt((value) => value + 1) },
+        tr("list.refresh", "刷新")
+      ),
+      React11.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: () => startEditing(root) },
+        tr("root.change", "更换根目录")
+      )
+    ),
+    entries.length === 0 ? React11.createElement(
+      "div",
+      { className: "dshwb-card" },
+      React11.createElement("h2", { className: "dshwb-card-title" }, tr("list.empty.title", "还没有工作台")),
+      React11.createElement(
+        "p",
+        { className: "dshwb-card-sub" },
+        tr(
+          "list.empty.sub",
+          "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或点「新建工作台」创建。"
+        )
+      ),
+      React11.createElement(
+        "div",
+        { className: "dshwb-actions" },
+        React11.createElement(
+          "button",
+          { type: "button", className: "dshwb-primary", onClick: openCreate },
+          tr("list.empty.action", "新建工作台")
+        )
+      )
+    ) : React11.createElement(
+      React11.Fragment,
+      null,
+      React11.createElement(
+        "ul",
+        { className: "dshwb-list" },
+        entries.map((entry) => {
+          const openable = isOpenable(entry);
+          const rowBody = [
+            React11.createElement(
+              "span",
+              { key: "main", className: "dshwb-item-main" },
+              React11.createElement(
+                "span",
+                { className: "dshwb-item-headline" },
+                React11.createElement("span", { className: "dshwb-item-name" }, entry.name),
+                entry.status !== "ok" && React11.createElement(
+                  "span",
+                  { className: `dshwb-badge dshwb-badge-${entry.status}` },
+                  tr(WORKBENCH_STATUS_LABEL_KEYS[entry.status], entry.status)
+                )
+              ),
+              entry.status !== "ok" && React11.createElement(
+                "span",
+                { className: "dshwb-item-hint" },
+                tr(WORKBENCH_STATUS_HINT_KEYS[entry.status], entry.status)
+              )
+            ),
+            // Missing/corrupt entries have no readable name, so the Host
+            // reports the id as the name: never show the id twice.
+            entry.name !== entry.id && React11.createElement(
+              "span",
+              { key: "id", className: "dshwb-item-id" },
+              entry.id
+            ),
+            openable && React11.createElement(
+              "span",
+              { key: "chevron", className: "dshwb-item-chevron", "aria-hidden": true },
+              "›"
+            )
+          ];
+          return React11.createElement(
+            "li",
+            { key: entry.id, className: "dshwb-row" },
+            openable ? React11.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-item",
+                title: entry.name,
+                onClick: () => void openWorkbench(entry.id)
+              },
+              rowBody
+            ) : React11.createElement("div", { className: "dshwb-item dshwb-item-static" }, rowBody),
+            !openable && React11.createElement(
+              "div",
+              { className: "dshwb-row-actions" },
+              confirmingCleanupId === entry.id ? React11.createElement(
+                React11.Fragment,
+                null,
+                React11.createElement(
+                  "span",
+                  { className: "dshwb-row-confirm" },
+                  entry.status === "missing" ? tr(
+                    "list.cleanup.missing",
+                    "清理这条登记？工作台目录已不存在，只会移除索引里的登记。"
+                  ) : tr(
+                    "list.cleanup.corrupt",
+                    "清理这条登记？会删除损坏的工作台目录与索引登记，无法撤销。"
+                  )
+                ),
+                React11.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dshwb-link dshwb-link-danger",
+                    disabled: cleaningUp,
+                    onClick: () => void cleanupEntry(entry.id)
+                  },
+                  cleaningUp ? tr("list.cleanup.working", "清理中…") : tr("list.cleanup.confirm", "确认清理")
+                ),
+                React11.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dshwb-link",
+                    disabled: cleaningUp,
+                    onClick: () => setConfirmingCleanupId(null)
+                  },
+                  tr("list.cleanup.cancel", "取消")
+                )
+              ) : React11.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "dshwb-link dshwb-link-danger",
+                  onClick: () => {
+                    setCleanupError(null);
+                    setConfirmingCleanupId(entry.id);
+                  }
+                },
+                tr("list.cleanup", "清理登记")
+              )
+            )
+          );
+        })
+      ),
+      cleanupError !== null && React11.createElement("p", { className: "dshwb-error", role: "alert" }, cleanupError)
+    )
+  );
+  const renderWorkbenchEditor = (workbench) => {
+    const client = rpc;
+    if (client === void 0) {
+      return React11.createElement(
+        "div",
+        { className: "dshwb-card" },
+        React11.createElement("p", { className: "dshwb-card-sub" }, tr("error.connection", "连接服务不可用，请稍后重试")),
+        React11.createElement(
+          "div",
+          { className: "dshwb-actions" },
+          React11.createElement(
+            "button",
+            { type: "button", className: "dshwb-secondary", onClick: () => void load() },
+            tr("list.retry", "重试")
+          )
+        )
+      );
+    }
+    return React11.createElement(WorkbenchEditor, {
+      key: workbench.id,
+      workbench,
+      tr,
+      client,
+      shell: props.shell,
+      entries: state.phase === "ready" ? state.entries : [],
+      defaultDrawerOpen: view.kind === "workbench" && view.configure === true ? true : drawerOpen,
+      onBack: () => void load(),
+      onReload: () => void refresh(),
+      onSwitch: (id) => void openWorkbench(id),
+      onDeleted: handleDeleted,
+      onDrawerChange: setDrawerOpen,
+      onCreateWorkbench: openCreate
+    });
+  };
+  const renderOpenError = (id, message) => React11.createElement(
+    "div",
+    { className: "dshwb-card" },
+    React11.createElement("h2", { className: "dshwb-card-title" }, tr("workbench.error.title", "打开工作台失败")),
+    React11.createElement("p", { className: "dshwb-card-sub" }, message),
+    React11.createElement(
+      "div",
+      { className: "dshwb-actions" },
+      React11.createElement(
+        "button",
+        { type: "button", className: "dshwb-secondary", onClick: () => setView({ kind: "list" }) },
+        tr("workbench.back", "返回列表")
+      ),
+      React11.createElement(
+        "button",
+        { type: "button", className: "dshwb-primary", onClick: () => void openWorkbench(id) },
+        tr("list.retry", "重试")
+      )
+    )
+  );
+  let body;
+  let workbenchView = false;
+  if (state.phase === "loading") {
+    body = React11.createElement("p", { className: "dshwb-loading" }, tr("list.loading", "正在读取…"));
+  } else if (state.phase === "no-root") {
+    body = renderRootForm();
+  } else if (state.phase === "ready") {
+    if (editingRoot) {
+      body = renderRootForm();
+    } else if (view.kind === "workbench") {
+      workbenchView = true;
+      body = renderWorkbenchEditor(view.workbench);
+    } else if (view.kind === "opening") {
+      body = React11.createElement("p", { className: "dshwb-loading" }, tr("workbench.opening", "正在打开…"));
+    } else if (view.kind === "open-error") {
+      body = renderOpenError(view.id, view.message);
+    } else {
+      body = renderList(state.root, state.entries);
+    }
+  } else {
+    body = React11.createElement(
+      React11.Fragment,
+      null,
+      React11.createElement(
+        "div",
+        { className: "dshwb-card" },
+        React11.createElement("h2", { className: "dshwb-card-title" }, tr("error.title", "读取失败")),
+        React11.createElement("p", { className: "dshwb-card-sub" }, state.message),
+        React11.createElement(
+          "div",
+          { className: "dshwb-actions" },
+          React11.createElement(
+            "button",
+            { type: "button", className: "dshwb-secondary", onClick: () => setAttempt((value) => value + 1) },
+            tr("list.retry", "重试")
+          ),
+          React11.createElement(
+            "button",
+            { type: "button", className: "dshwb-secondary", onClick: () => startEditing("") },
+            tr("root.change", "更换根目录")
+          )
+        )
+      ),
+      editingRoot && renderRootForm()
+    );
+  }
+  return React11.createElement(
     "div",
     {
+      className: "dshwb-panel-root",
       style: {
         position: "relative",
         height: "100%",
@@ -480,103 +3055,19 @@ function HelloPanel(props) {
         background: HERO_BASE
       }
     },
-    React.createElement("style", {
-      dangerouslySetInnerHTML: { __html: PANEL_CSS }
-    }),
-    React.createElement(HeroBackdrop),
-    React.createElement(
+    React11.createElement("style", { dangerouslySetInnerHTML: { __html: PANEL_CSS } }),
+    React11.createElement(HeroBackdrop),
+    React11.createElement(
       "div",
-      { className: "dshwb-content" },
-      empty ? React.createElement(
-        "div",
-        { className: "dshwb-stack" },
-        React.createElement("p", { className: "dshwb-hint" }, tr("empty.hint", "还没有工作台")),
-        React.createElement("p", { className: "dshwb-sub" }, tr("empty.sub", "创建你的第一个工作台，沉淀任务、资料与工作流。")),
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            ref: triggerRef,
-            className: "dshwb-primary",
-            onClick: openDialog
-          },
-          tr("empty.action", "创建工作台")
-        )
-      ) : React.createElement(
-        "div",
-        { className: "dshwb-stack" },
-        React.createElement("p", { className: "dshwb-hint" }, tr("created.hint", "当前工作台")),
-        React.createElement("p", { className: "dshwb-created-name" }, workbench),
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            ref: triggerRef,
-            className: "dshwb-secondary",
-            onClick: openDialog
-          },
-          tr("created.action", "新建工作台")
-        )
-      )
+      { className: workbenchView ? "dshwb-content dshwb-content-workbench" : "dshwb-content" },
+      workbenchView ? body : React11.createElement("div", { className: "dshwb-stack" }, body)
     ),
-    dialogOpen && React.createElement(
-      "div",
-      {
-        className: "dshwb-overlay",
-        onClick: closeDialog
-      },
-      React.createElement(
-        "div",
-        {
-          className: "dshwb-dialog",
-          role: "dialog",
-          "aria-modal": true,
-          "aria-label": tr("dialog.title", "创建工作台"),
-          onClick: (event) => event.stopPropagation()
-        },
-        React.createElement("h2", { className: "dshwb-dialog-title" }, tr("dialog.title", "创建工作台")),
-        React.createElement("p", { className: "dshwb-dialog-sub" }, tr("dialog.sub", "给它起个名字，之后可以随时修改。")),
-        React.createElement(
-          "label",
-          { className: "dshwb-label" },
-          tr("dialog.nameLabel", "工作台名称"),
-          React.createElement("input", {
-            ref: inputRef,
-            className: "dshwb-input",
-            type: "text",
-            value: draftName,
-            placeholder: tr("dialog.namePlaceholder", "例如：我的工作台"),
-            autoComplete: "off",
-            spellCheck: false,
-            onChange: (event) => setDraftName(event.target.value),
-            onKeyDown: (event) => {
-              if (event.key !== "Enter") return;
-              event.preventDefault();
-              createWorkbench();
-            }
-          })
-        ),
-        React.createElement(
-          "div",
-          { className: "dshwb-actions" },
-          React.createElement(
-            "button",
-            { type: "button", className: "dshwb-secondary", onClick: closeDialog },
-            tr("dialog.cancel", "取消")
-          ),
-          React.createElement(
-            "button",
-            {
-              type: "button",
-              className: "dshwb-primary",
-              disabled: !canCreate,
-              onClick: createWorkbench
-            },
-            tr("dialog.create", "创建")
-          )
-        )
-      )
-    )
+    creating && React11.createElement(CreateWorkbenchDialog, {
+      translate: tr,
+      takenIds,
+      onClose: () => setCreating(false),
+      onCreate: createAndOpenWorkbench
+    })
   );
 }
 
@@ -776,13 +3267,140 @@ var zh = {
   "empty.sub": "创建你的第一个工作台，沉淀任务、资料与工作流。",
   "empty.action": "创建工作台",
   "dialog.title": "创建工作台",
-  "dialog.sub": "给它起个名字，之后可以随时修改。",
+  "dialog.sub": "给它起个名字，之后再配置子面板与版面。",
   "dialog.nameLabel": "工作台名称",
   "dialog.namePlaceholder": "例如：我的工作台",
   "dialog.cancel": "取消",
   "dialog.create": "创建",
+  "dialog.creating": "创建中…",
+  "dialog.idLabel": "工作台 id（自动生成，只读）",
+  "dialog.idPlaceholder": "输入名称后自动生成",
+  "dialog.idHint": "id 也是文件夹名，创建后不可修改；可以复制给 AI 使用。",
+  "dialog.copy": "复制",
+  "dialog.copied": "已复制",
   "created.hint": "当前工作台",
-  "created.action": "新建工作台"
+  "created.action": "新建工作台",
+  "root.title": "设置工作台根目录",
+  "root.sub": "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。",
+  "root.label": "根目录路径",
+  "root.placeholder": "例如：D:\\work\\my-workbenches",
+  "root.save": "保存并继续",
+  "root.saving": "校验中…",
+  "root.pick": "选择文件夹…",
+  "root.picking": "正在打开选择框…",
+  "root.pick.or": "或手动填写路径",
+  "root.pick.unavailable": "系统文件夹选择框不可用，请直接填写下面的路径。",
+  "root.pick.failed": "系统文件夹选择框打不开，请直接填写下面的路径。",
+  "root.needPath": "请先填写文件夹路径",
+  "root.change": "更换根目录",
+  "root.cancel": "取消",
+  "list.loading": "正在读取…",
+  "list.refresh": "刷新",
+  "list.retry": "重试",
+  "list.empty.title": "还没有工作台",
+  "list.empty.sub": "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或点「新建工作台」创建。",
+  "list.empty.action": "新建工作台",
+  "bar.new": "新建工作台",
+  "bar.switch": "切换工作台",
+  "bar.delete": "删除工作台",
+  "bar.deleteConfirm": "删除这个工作台？目录与索引登记都会移除，无法撤销。",
+  "bar.confirmDelete": "确认删除",
+  "bar.cancelDelete": "取消",
+  "bar.deleting": "删除中…",
+  "list.status.adopted": "外部新建",
+  "list.status.adopted.hint": "从磁盘扫描到、还没打开过的工作台；打开一次后标记会消失。",
+  "list.status.missing": "缺失",
+  "list.status.missing.hint": "索引里有登记，但工作台目录或 JSON 已不在；不会自动删除登记。",
+  "list.status.corrupt": "损坏",
+  "list.status.corrupt.hint": "工作台 JSON 无法解析；修好文件后点「刷新」即可恢复。",
+  "list.cleanup": "清理登记",
+  "list.cleanup.missing": "清理这条登记？工作台目录已不存在，只会移除索引里的登记。",
+  "list.cleanup.corrupt": "清理这条登记？会删除损坏的工作台目录与索引登记，无法撤销。",
+  "list.cleanup.confirm": "确认清理",
+  "list.cleanup.cancel": "取消",
+  "list.cleanup.working": "清理中…",
+  "workbench.back": "返回列表",
+  "workbench.refresh": "刷新",
+  "workbench.opening": "正在打开…",
+  "workbench.colsUnit": "列",
+  "workbench.panelsUnit": "个子面板",
+  "workbench.error.title": "打开工作台失败",
+  "save.saving": "保存中…",
+  "save.saved": "已保存",
+  "save.pending": "待保存",
+  "save.errorPrefix": "保存失败：",
+  "save.retry": "重试",
+  "drawer.title": "配置",
+  "drawer.show": "配置",
+  "drawer.hide": "收起配置",
+  "drawer.close": "收起",
+  "drawer.workbench": "工作台",
+  "drawer.name": "名称",
+  "drawer.namePlaceholder": "例如：我的工作台",
+  "drawer.description": "描述",
+  "drawer.descriptionPlaceholder": "这个工作台是做什么的",
+  "drawer.cols": "列数",
+  "drawer.id": "id（创建后只读）",
+  "drawer.copy": "复制",
+  "drawer.copied": "已复制",
+  "drawer.panels": "子面板",
+  "drawer.noPanels": "还没有子面板。",
+  "drawer.panelProps": "子面板属性",
+  "drawer.selectPanelHint": "在下面的列表里选择一个子面板来编辑它的属性。",
+  "drawer.add": "添加子面板",
+  "drawer.moveUp": "上移",
+  "drawer.moveDown": "下移",
+  "drawer.delete": "删除",
+  "drawer.deleteConfirm": "确认删除？",
+  "drawer.confirm": "确认",
+  "drawer.cancel": "取消",
+  "panel.untitled": "未命名",
+  "panel.title": "标题",
+  "panel.titlePlaceholder": "显示在子面板顶部的标题",
+  "panel.sub": "副标题",
+  "panel.subPlaceholder": "可选的一行补充说明",
+  "panel.type": "类型",
+  "panel.type.reserved": "占位",
+  "panel.type.harness": "会话门牌",
+  "panel.layout": "位置与跨度",
+  "panel.layoutHint": "留空表示自动排列；坐标从 1 开始。",
+  "panel.col": "起始列",
+  "panel.row": "起始行",
+  "panel.w": "跨列",
+  "panel.h": "跨行",
+  "panel.text": "占位文本",
+  "panel.textPlaceholder": "占位面板里显示的文字",
+  "panel.sessionTitle": "会话标题",
+  "panel.sessionTitlePlaceholder": "显示在门牌上的标题",
+  "panel.sessionId": "会话 id",
+  "panel.sessionIdPlaceholder": "要打开的会话",
+  "panel.pinTarget": "定位目标",
+  "panel.pinTargetPlaceholder": "多个用逗号分隔",
+  "panel.sessionTitleHint": "门牌优先显示外壳里的当前标题；读不到时用这个缓存标题。",
+  "panel.sessions.label": "会话",
+  "panel.sessions.none": "未绑定（选一条会话）",
+  "panel.sessions.missing": "绑定的会话已不在外壳列表里",
+  "panel.sessions.unavailable": "读不到外壳的会话列表；可以手填会话 id，点击门牌时仍会按 id 打开。",
+  "panel.sessions.empty": "外壳里还没有会话，先去侧栏建一条。",
+  "panel.harness.untitled": "未命名会话",
+  "panel.harness.openHint": "点击打开这条会话",
+  "panel.harness.open": "打开会话",
+  "panel.harness.openByIdHint": "按保存的会话 id 直接打开",
+  "panel.harness.openFailed": "打不开这条会话：外壳没有提供打开能力。",
+  "panel.harness.unbound": "还没有绑定会话：在配置里选一条会话。",
+  "panel.harness.missing": "绑定的会话不存在或不可读；仍可按 id 尝试打开，或在配置里重新选一条。",
+  "panel.harness.unavailable": "读不到外壳的会话列表，暂时无法显示会话状态；仍可按 id 尝试打开。",
+  "panel.harness.running": "运行中",
+  "panel.harness.idle": "空闲",
+  "panel.unknownFields": "这个类型没有内置编辑器；它的未知字段会原样保存。",
+  "panel.new.reserved": "占位面板",
+  "panel.new.harness": "会话门牌",
+  "panel.empty": "这个工作台还没有子面板。在工作台 JSON 的 panels 里加一个，再点「刷新」。",
+  "panel.unknown": "未知面板类型",
+  "panel.outOfBounds": "坐标越界",
+  "panel.reserved.placeholder": "占位面板，内容待补充",
+  "error.title": "读取失败",
+  "error.connection": "连接服务不可用，请稍后重试"
 };
 var en = {
   "menu.label": "Workbench",
@@ -790,24 +3408,154 @@ var en = {
   "empty.sub": "Create your first workbench to keep tasks, files and flows together.",
   "empty.action": "Create workbench",
   "dialog.title": "Create workbench",
-  "dialog.sub": "Give it a name — you can change it later.",
+  "dialog.sub": "Name it first — configure panels and layout next.",
   "dialog.nameLabel": "Workbench name",
   "dialog.namePlaceholder": "e.g. My workbench",
   "dialog.cancel": "Cancel",
   "dialog.create": "Create",
+  "dialog.creating": "Creating…",
+  "dialog.idLabel": "Workbench id (auto-generated, read-only)",
+  "dialog.idPlaceholder": "Generated from the name",
+  "dialog.idHint": "The id is also the folder name and cannot change after creation; copy it to an AI.",
+  "dialog.copy": "Copy",
+  "dialog.copied": "Copied",
   "created.hint": "Current workbench",
-  "created.action": "New workbench"
+  "created.action": "New workbench",
+  "root.title": "Set the workbench root folder",
+  "root.sub": "The index and every workbench JSON will be written into this folder.",
+  "root.label": "Root folder path",
+  "root.placeholder": "e.g. D:\\work\\my-workbenches",
+  "root.save": "Save and continue",
+  "root.saving": "Checking…",
+  "root.pick": "Choose folder…",
+  "root.picking": "Opening chooser…",
+  "root.pick.or": "Or type the path manually",
+  "root.pick.unavailable": "The system folder dialog is unavailable — type the path below instead.",
+  "root.pick.failed": "The system folder dialog could not open — type the path below instead.",
+  "root.needPath": "Enter a folder path first",
+  "root.change": "Change root",
+  "root.cancel": "Cancel",
+  "list.loading": "Loading…",
+  "list.refresh": "Refresh",
+  "list.retry": "Retry",
+  "list.empty.title": "No workbench yet",
+  "list.empty.sub": "This root has no workbench yet. Ask an AI to drop an <id>/<id>.json here, or click “New workbench”.",
+  "list.empty.action": "New workbench",
+  "bar.new": "New workbench",
+  "bar.switch": "Switch workbench",
+  "bar.delete": "Delete workbench",
+  "bar.deleteConfirm": "Delete this workbench? Its folder and index entry are removed; this cannot be undone.",
+  "bar.confirmDelete": "Delete",
+  "bar.cancelDelete": "Cancel",
+  "bar.deleting": "Deleting…",
+  "list.status.adopted": "New on disk",
+  "list.status.adopted.hint": "Found on disk but not opened yet; the flag clears once you open it.",
+  "list.status.missing": "Missing",
+  "list.status.missing.hint": "Still in the index, but its folder or JSON is gone; the entry is never deleted automatically.",
+  "list.status.corrupt": "Corrupt",
+  "list.status.corrupt.hint": "The workbench JSON cannot be parsed; fix the file and hit Refresh.",
+  "list.cleanup": "Remove entry",
+  "list.cleanup.missing": "Remove this index entry? The folder is already gone, so only the entry is dropped.",
+  "list.cleanup.corrupt": "Remove this entry? The damaged folder and its index entry are deleted; this cannot be undone.",
+  "list.cleanup.confirm": "Remove",
+  "list.cleanup.cancel": "Cancel",
+  "list.cleanup.working": "Removing…",
+  "workbench.back": "Back to list",
+  "workbench.refresh": "Refresh",
+  "workbench.opening": "Opening…",
+  "workbench.colsUnit": "columns",
+  "workbench.panelsUnit": "panels",
+  "workbench.error.title": "Could not open the workbench",
+  "save.saving": "Saving…",
+  "save.saved": "Saved",
+  "save.pending": "Unsaved",
+  "save.errorPrefix": "Save failed: ",
+  "save.retry": "Retry",
+  "drawer.title": "Settings",
+  "drawer.show": "Settings",
+  "drawer.hide": "Hide settings",
+  "drawer.close": "Hide",
+  "drawer.workbench": "Workbench",
+  "drawer.name": "Name",
+  "drawer.namePlaceholder": "e.g. My workbench",
+  "drawer.description": "Description",
+  "drawer.descriptionPlaceholder": "What this workbench is for",
+  "drawer.cols": "Columns",
+  "drawer.id": "id (read-only after creation)",
+  "drawer.copy": "Copy",
+  "drawer.copied": "Copied",
+  "drawer.panels": "Panels",
+  "drawer.noPanels": "No panel yet.",
+  "drawer.panelProps": "Panel properties",
+  "drawer.selectPanelHint": "Pick a panel in the list below to edit its properties.",
+  "drawer.add": "Add panel",
+  "drawer.moveUp": "Move up",
+  "drawer.moveDown": "Move down",
+  "drawer.delete": "Delete",
+  "drawer.deleteConfirm": "Delete?",
+  "drawer.confirm": "Confirm",
+  "drawer.cancel": "Cancel",
+  "panel.untitled": "Untitled",
+  "panel.title": "Title",
+  "panel.titlePlaceholder": "Shown in the panel header",
+  "panel.sub": "Subtitle",
+  "panel.subPlaceholder": "Optional one-line note",
+  "panel.type": "Type",
+  "panel.type.reserved": "Placeholder",
+  "panel.type.harness": "Session badge",
+  "panel.layout": "Position and span",
+  "panel.layoutHint": "Empty means auto flow; coordinates are one-based.",
+  "panel.col": "Start column",
+  "panel.row": "Start row",
+  "panel.w": "Column span",
+  "panel.h": "Row span",
+  "panel.text": "Placeholder text",
+  "panel.textPlaceholder": "Text shown in the placeholder panel",
+  "panel.sessionTitle": "Session title",
+  "panel.sessionTitlePlaceholder": "Title shown on the badge",
+  "panel.sessionId": "Session id",
+  "panel.sessionIdPlaceholder": "Session to open",
+  "panel.pinTarget": "Pin targets",
+  "panel.pinTargetPlaceholder": "Comma-separated",
+  "panel.sessionTitleHint": "The badge prefers the shell’s live title; this cached title shows when it cannot be read.",
+  "panel.sessions.label": "Session",
+  "panel.sessions.none": "Not bound (pick a session)",
+  "panel.sessions.missing": "The bound session is no longer in the shell list",
+  "panel.sessions.unavailable": "The shell session list cannot be read; type the session id manually — the badge still opens by id.",
+  "panel.sessions.empty": "The shell has no session yet; create one from the sidebar first.",
+  "panel.harness.untitled": "Untitled session",
+  "panel.harness.openHint": "Click to open this session",
+  "panel.harness.open": "Open session",
+  "panel.harness.openByIdHint": "Open by the saved session id",
+  "panel.harness.openFailed": "Could not open this session: the shell offers no open capability.",
+  "panel.harness.unbound": "No session bound yet — pick one in the settings.",
+  "panel.harness.missing": "The bound session is missing or unreadable; you can still try opening it by id, or pick another one in the settings.",
+  "panel.harness.unavailable": "The shell session list is unreadable, so the session status cannot be shown; you can still try opening it by id.",
+  "panel.harness.running": "Running",
+  "panel.harness.idle": "Idle",
+  "panel.unknownFields": "This type has no built-in editor; its unknown fields are saved as-is.",
+  "panel.new.reserved": "Placeholder",
+  "panel.new.harness": "Session badge",
+  "panel.empty": "This workbench has no panel yet. Add one to panels in the workbench JSON, then hit Refresh.",
+  "panel.unknown": "Unknown panel type",
+  "panel.outOfBounds": "Out of bounds",
+  "panel.reserved.placeholder": "Placeholder panel — content to come later",
+  "error.title": "Could not load",
+  "error.connection": "The connection service is unavailable; try again shortly"
 };
 var name = "dsh-hello-word";
 var inject = ["slots", "locale", "layout"];
 function apply(ctx) {
   const t = ctx.locale.bind(NS);
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "workbench: dictionaries");
+  const rpc = createWorkbenchClient(ctx);
+  const shell = createSessionShell(ctx);
+  const panel = (props) => React12.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc, shell });
   ctx.slots.inject(
     "main",
     () => ctx.slots.register(
       { name: "main", key: PANEL_ID, locale: NS },
-      HelloPanel
+      panel
     )
   );
   ctx.effect(() => mountHeaderButton(ctx, t), "workbench: sidebar header button");
