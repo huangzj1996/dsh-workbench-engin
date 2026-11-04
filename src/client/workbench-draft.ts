@@ -1,18 +1,16 @@
 /**
- * Draft helpers: build and edit a workbench workbench locally before it is saved.
+ * Draft helpers: build and edit a workbench locally before it is saved.
  *
  * The editor mutates a plain workbench object and renders from it immediately; the
  * autosave layer persists whatever the object becomes. These helpers are pure
  * so the ordering/identity rules are testable without a DOM, and they replace
  * (never mutate) the workbench so React sees a new value.
+ *
+ * The panel types themselves (labels, default fields, session binding) live in
+ * `panel-types`; this module only knows how to put them on a workbench.
  */
 import { DEFAULT_COLS, type WorkbenchPanel, type Workbench } from '../shared/workbench/schema';
-
-/** The panel types the v1 config drawer offers. */
-export const PANEL_TYPES = ['reserved', 'harness'] as const;
-
-/** One of the panel types the config drawer offers. */
-export type PanelType = (typeof PANEL_TYPES)[number];
+import { panelDefaultFields, type PanelType } from './panel-types';
 
 /** First free `panel-N` id, so a created panel never collides with a placed one. */
 function nextPanelId(panels: readonly Pick<WorkbenchPanel, 'id'>[]): string {
@@ -33,11 +31,7 @@ export function createPanel(
   panels: readonly Pick<WorkbenchPanel, 'id'>[],
   title: string,
 ): WorkbenchPanel {
-  const id = nextPanelId(panels);
-  if (type === 'harness') {
-    return { id, title, type, sessionTitle: '', sessionId: '', pinTarget: [] };
-  }
-  return { id, title, type, text: '' };
+  return { id: nextPanelId(panels), title, type, ...panelDefaultFields(type) };
 }
 
 /** A brand-new workbench: four columns and one reserved placeholder panel. */
@@ -135,12 +129,8 @@ export function changePanelType(
   const current = workbench.panels.find((panel) => panel.id === id);
   if (current === undefined || current.type === type) return workbench;
   const next: WorkbenchPanel = { ...current, type };
-  const defaults: WorkbenchPanel =
-    type === 'harness'
-      ? { id, title: current.title, type, sessionTitle: '', sessionId: '', pinTarget: [] }
-      : { id, title: current.title, type, text: '' };
-  for (const key of Object.keys(defaults)) {
-    if (next[key] === undefined) next[key] = defaults[key];
+  for (const [key, value] of Object.entries(panelDefaultFields(type))) {
+    if (next[key] === undefined) next[key] = value;
   }
   return updatePanel(workbench, id, next);
 }

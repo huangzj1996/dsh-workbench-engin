@@ -13,7 +13,7 @@
 import * as React from 'react';
 
 import { harnessBinding } from '../harness-binding';
-import { harnessBadgeView } from '../harness-view';
+import { harnessBadgeView, harnessOpenTarget } from '../harness-view';
 import { useSessionSnapshot } from '../use-session-snapshot';
 import type { PanelRendererProps } from './types';
 
@@ -34,6 +34,9 @@ export const HARNESS_CSS = `
 .dshwb-harness-reason{margin:0;color:rgba(226,234,248,.72);font-size:12px;line-height:1.6}
 .dshwb-harness-error{margin:0;color:#ffb4a8;font-size:11.5px;line-height:1.6}
 .dshwb-harness-degraded{padding:10px 12px;border:1px dashed rgba(255,196,84,.35);border-radius:10px;background:rgba(255,196,84,.06)}
+.dshwb-harness-open{display:inline-flex;align-items:center;align-self:flex-start;margin-top:2px;padding:5px 11px;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:transparent;color:#eef3fb;font-family:inherit;font-size:11.5px;line-height:1.4;cursor:pointer;transition:background .15s ease}
+.dshwb-harness-open:hover{background:rgba(255,255,255,.1)}
+.dshwb-harness-open:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 `;
 
 /** One line naming the bound session when the shell cannot report its title. */
@@ -49,18 +52,32 @@ export function HarnessPanel(props: PanelRendererProps): React.ReactElement {
   const snapshot = useSessionSnapshot(shell);
   const view = harnessBadgeView(binding, snapshot);
   const [openFailed, setOpenFailed] = React.useState(false);
+  // Any stored id can be opened, even when the shell list cannot describe it.
+  const openTarget = harnessOpenTarget(binding);
 
-  const boundId = view.kind === 'bound' ? view.sessionId : '';
   // A different binding is a fresh attempt; forget the previous failure.
   React.useEffect(() => {
     setOpenFailed(false);
-  }, [boundId]);
+  }, [openTarget]);
 
   const open = (): void => {
-    if (view.kind !== 'bound') return;
+    if (openTarget === null) return;
     setOpenFailed(false);
-    if (shell === undefined || !shell.openSession(view.sessionId)) setOpenFailed(true);
+    if (shell === undefined || !shell.openSession(openTarget)) setOpenFailed(true);
   };
+
+  /** Fallback action for a badge whose session the shell cannot describe. */
+  const openButton = (): React.ReactElement =>
+    React.createElement(
+      'button',
+      {
+        type: 'button',
+        className: 'dshwb-harness-open',
+        title: tr('panel.harness.openByIdHint', '按保存的会话 id 直接打开'),
+        onClick: open,
+      },
+      tr('panel.harness.open', '打开会话'),
+    );
 
   let body: React.ReactNode;
   if (view.kind === 'bound') {
@@ -117,9 +134,10 @@ export function HarnessPanel(props: PanelRendererProps): React.ReactElement {
       React.createElement(
         'p',
         { className: 'dshwb-harness-reason' },
-        tr('panel.harness.missing', '绑定的会话不存在或不可读；在配置里重新选一条。'),
+        tr('panel.harness.missing', '绑定的会话不存在或不可读；仍可按 id 尝试打开，或在配置里重新选一条。'),
       ),
       React.createElement('p', { className: 'dshwb-harness-id' }, view.sessionId),
+      openTarget !== null && openButton(),
     );
   } else {
     body = React.createElement(
@@ -133,9 +151,10 @@ export function HarnessPanel(props: PanelRendererProps): React.ReactElement {
       React.createElement(
         'p',
         { className: 'dshwb-harness-reason' },
-        tr('panel.harness.unavailable', '读不到外壳的会话列表，暂时无法显示会话状态。'),
+        tr('panel.harness.unavailable', '读不到外壳的会话列表，暂时无法显示会话状态；仍可按 id 尝试打开。'),
       ),
       React.createElement('p', { className: 'dshwb-harness-id' }, view.sessionId),
+      openTarget !== null && openButton(),
     );
   }
 

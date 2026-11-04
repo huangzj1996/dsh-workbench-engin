@@ -162,6 +162,67 @@ describe('list: index reconciliation', () => {
     expect(indexText.workbenches).toEqual([{ id: 'bad', order: 1 }]);
   });
 
+  it('marks a workbench whose JSON id does not match its folder as corrupt', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await mkdir(path.join(root, 'alpha'), { recursive: true });
+    await writeFile(
+      path.join(root, 'alpha', 'alpha.json'),
+      JSON.stringify({ id: 'beta', name: 'Beta', panels: [] }),
+      'utf8',
+    );
+
+    const result = await store.list(root);
+
+    expect(result.entries).toEqual([{ id: 'alpha', name: 'alpha', status: 'corrupt', order: 1 }]);
+  });
+
+  it('backfills a missing context card for a workbench that appeared on disk', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await writeWorkbench(root, 'alpha', 'Alpha');
+
+    await store.list(root);
+
+    const card = await readFile(path.join(root, 'alpha', 'alpha-context.md'), 'utf8');
+    expect(card).toContain('# Alpha');
+  });
+
+  it('does not overwrite an existing context card while backfilling on list', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await writeWorkbench(root, 'alpha', 'Alpha');
+    const cardFile = path.join(root, 'alpha', 'alpha-context.md');
+    await writeFile(cardFile, '# AI 写过的定位卡\n', 'utf8');
+
+    await store.list(root);
+
+    expect(await readFile(cardFile, 'utf8')).toBe('# AI 写过的定位卡\n');
+  });
+
+  it('keeps listing when the missing context card cannot be written', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({
+      dshHome,
+      fs: {
+        ...nodeFsAdapter,
+        writeFile: async (file: string, data: string, encoding: 'utf8') => {
+          if (file.includes('-context.md')) throw new Error('read-only root');
+          await nodeFsAdapter.writeFile(file, data, encoding);
+        },
+      },
+    });
+    await writeWorkbench(root, 'alpha', 'Alpha');
+
+    const result = await store.list(root);
+
+    expect(result.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'adopted', order: 1 }]);
+  });
+
   it('orders entries by the index and appends newly discovered workbenches at the end', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
@@ -218,6 +279,18 @@ describe('read', () => {
     expect(result.workbench.panels).toHaveLength(1);
   });
 
+  it('backfills the context card when reading a workbench that has none', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await writeWorkbench(root, 'alpha', 'Alpha');
+
+    await store.read(root, 'alpha');
+
+    const card = await readFile(path.join(root, 'alpha', 'alpha-context.md'), 'utf8');
+    expect(card).toContain('# Alpha');
+  });
+
   it('reports a missing workbench as not-found', async () => {
     const dshHome = await tempDir('dsh-home');
     const root = await tempDir('workbenches');
@@ -238,6 +311,24 @@ describe('read', () => {
     const error = await rejection(store.read(root, 'bad'));
 
     expect(error.code).toBe('file-corrupt');
+  });
+
+  it('refuses to read alpha/alpha.json when the JSON claims id beta', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await mkdir(path.join(root, 'alpha'), { recursive: true });
+    await writeFile(
+      path.join(root, 'alpha', 'alpha.json'),
+      JSON.stringify({ id: 'beta', name: 'Beta', panels: [] }),
+      'utf8',
+    );
+
+    const error = await rejection(store.read(root, 'alpha'));
+
+    expect(error.code).toBe('file-corrupt');
+    expect(error.message).toContain('alpha');
+    expect(error.message).toContain('beta');
   });
 
   it('rejects an illegal id with id-invalid before touching disk', async () => {
@@ -298,6 +389,28 @@ describe('save', () => {
     expect(await readFile(cardFile, 'utf8')).toBe('# AI 改过的定位卡\n');
     const saved = JSON.parse(await readFile(path.join(root, 'demo', 'demo.json'), 'utf8'));
     expect(saved.name).toBe('Demo 改名');
+  });
+
+  it('writes the context card atomically and leaves no partial card when the rename fails', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({
+      dshHome,
+      fs: {
+        ...nodeFsAdapter,
+        rename: async (from: string, to: string) => {
+          if (to.endsWith('demo-context.md')) throw new Error('disk full');
+          await nodeFsAdapter.rename(from, to);
+        },
+      },
+    });
+
+    const error = await rejection(store.save(root, { id: 'demo', name: 'Demo', panels: [] }));
+
+    expect(error.code).toBe('write-failed');
+    await expect(readFile(path.join(root, 'demo', 'demo-context.md'), 'utf8')).rejects.toThrow();
+    const leftovers = await readdir(path.join(root, 'demo'));
+    expect(leftovers.sort()).toEqual(['demo.json']);
   });
 
   it('rejects a workbench larger than 256KB with too-large and writes nothing', async () => {
@@ -368,6 +481,66 @@ describe('delete', () => {
     const indexText = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
     expect(indexText.workbenches).toEqual([]);
     await expect(readFile(path.join(root, 'demo', 'demo.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('drops an indexed workbench whose folder is gone and reports success', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await writeIndex(root, [{ id: 'gone', order: 1 }]);
+
+    await expect(store.delete(root, 'gone')).resolves.toEqual({ id: 'gone' });
+
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    expect(index.workbenches).toEqual([]);
+  });
+
+  it('rejects a save racing with the delete of the same workbench and never recreates it', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    let releaseRemove = (): void => undefined;
+    let noteRemoveStarted = (): void => undefined;
+    const removeGate = new Promise<void>((resolve) => {
+      releaseRemove = resolve;
+    });
+    const removeStarted = new Promise<void>((resolve) => {
+      noteRemoveStarted = resolve;
+    });
+    const gatedFs = {
+      ...nodeFsAdapter,
+      rm: async (target: string, options: { force?: boolean; recursive?: boolean }) => {
+        if (options.recursive === true && target.endsWith('demo')) {
+          noteRemoveStarted();
+          await removeGate;
+        }
+        await nodeFsAdapter.rm(target, options);
+      },
+    };
+    const store = createWorkbenchStore({ dshHome, fs: gatedFs });
+    await store.save(root, { id: 'demo', name: 'Demo', panels: [] });
+
+    const deleting = store.delete(root, 'demo');
+    await removeStarted;
+    const error = await rejection(store.save(root, { id: 'demo', name: 'Demo', panels: [] }));
+    releaseRemove();
+    await expect(deleting).resolves.toEqual({ id: 'demo' });
+
+    expect(error.code).toBe('write-failed');
+    await expect(readFile(path.join(root, 'demo', 'demo.json'), 'utf8')).rejects.toThrow();
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    expect(index.workbenches).toEqual([]);
+  });
+
+  it('clears the delete tombstone once the delete finished', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await store.save(root, { id: 'demo', name: 'Demo', panels: [] });
+    await store.delete(root, 'demo');
+
+    await expect(
+      store.save(root, { id: 'demo', name: 'Demo again', panels: [] }),
+    ).resolves.toEqual({ workbench: { id: 'demo', name: 'Demo again', panels: [] } });
   });
 
   it('reports an unknown workbench as not-found', async () => {

@@ -10,15 +10,15 @@
 import * as React from 'react';
 
 import { useCopyToClipboard } from './clipboard';
-import { bindingPatch, harnessBinding } from './harness-binding';
-import { findSession } from './harness-view';
+import { bindingPatch, harnessBinding, parsePinTargetText } from './harness-binding';
+import { findSession, harnessOpenTarget } from './harness-view';
+import { PANEL_TYPES, panelTypeDefinition, panelTypeLabel, type PanelType } from './panel-types';
 import { useSessionSnapshot } from './use-session-snapshot';
-import { PANEL_TYPES, type PanelType } from './workbench-draft';
 import type { WorkbenchPanel, Workbench } from '../shared/workbench/schema';
 import { DEFAULT_COLS } from '../shared/workbench/schema';
 import type { HarnessSession, SessionShell } from './session-shell';
 import type { Translate } from './translate';
-import { normalizeWorkbenchName } from './workbench-name';
+import { normalizeWorkbenchName, syncNameDraft } from './workbench-name';
 
 /** The workbench-level fields this drawer edits. */
 export interface WorkbenchFieldsPatch {
@@ -77,18 +77,12 @@ export const DRAWER_CSS = `
 .dshwb-drawer select.dshwb-input{color-scheme:dark}
 .dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
 .dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-drawer-openrow{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}
 .dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
 .dshwb-session-dot-running{background:#56a0ff}
 .dshwb-session-dot-warn{background:#ffc454}
 @media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
 `;
-
-/** Human label for a panel type; unknown types fall back to their raw name. */
-function panelTypeLabel(tr: Translate, type: string): string {
-  if (type === 'reserved') return tr('panel.type.reserved', '占位');
-  if (type === 'harness') return tr('panel.type.harness', '会话门牌');
-  return type;
-}
 
 /** Read one string field off a panel without trusting the JSON shape. */
 function stringField(panel: WorkbenchPanel, key: string): string {
@@ -100,14 +94,6 @@ function stringField(panel: WorkbenchPanel, key: string): string {
 function stringArrayField(panel: WorkbenchPanel, key: string): string[] {
   const value = panel[key];
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
-}
-
-/** Parse a comma-separated input into the array `pinTarget` stores. */
-function parseStringList(raw: string): string[] {
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item !== '');
 }
 
 /** Raw string read for controlled inputs: never trims while the user types. */
@@ -144,6 +130,45 @@ function HarnessFields(props: {
   const bound = findSession(snapshot, binding.sessionId);
   const missing = snapshot.available && binding.sessionId !== '' && bound === null;
 
+  /**
+   * The stored id can always be opened, even while the shell list cannot
+   * describe the session (manual-id path and the "missing" case included).
+   */
+  const openTarget = harnessOpenTarget(binding);
+  const [openFailed, setOpenFailed] = React.useState(false);
+  React.useEffect(() => {
+    setOpenFailed(false);
+  }, [openTarget]);
+  const open = (): void => {
+    if (openTarget === null) return;
+    setOpenFailed(false);
+    if (shell === undefined || !shell.openSession(openTarget)) setOpenFailed(true);
+  };
+  const openRow: React.ReactNode =
+    openTarget === null
+      ? null
+      : React.createElement(
+          'div',
+          { className: 'dshwb-drawer-openrow' },
+          React.createElement(
+            'button',
+            { type: 'button', className: 'dshwb-secondary', onClick: open },
+            tr('panel.harness.open', '打开会话'),
+          ),
+          React.createElement(
+            'span',
+            { className: 'dshwb-drawer-hint' },
+            tr('panel.harness.openByIdHint', '按保存的会话 id 直接打开'),
+          ),
+        );
+  const openError = openFailed
+    ? React.createElement(
+        'p',
+        { className: 'dshwb-error', role: 'alert' },
+        tr('panel.harness.openFailed', '打不开这条会话：外壳没有提供打开能力。'),
+      )
+    : null;
+
   /** Dropdown choice: empty unbinds, a known session writes all three fields. */
   const pick = (id: string): void => {
     if (id === '') {
@@ -161,7 +186,7 @@ function HarnessFields(props: {
     label: tr('panel.pinTarget', '定位目标'),
     value: stringArrayField(panel, 'pinTarget').join(', '),
     placeholder: tr('panel.pinTargetPlaceholder', '多个用逗号分隔'),
-    onValue: (value: string) => onValue({ pinTarget: parseStringList(value) }),
+    onValue: (value: string) => onValue({ pinTarget: parsePinTargetText(value) }),
   });
 
   if (!snapshot.available) {
@@ -183,6 +208,8 @@ function HarnessFields(props: {
         placeholder: tr('panel.sessionIdPlaceholder', '要打开的会话'),
         onValue: (value: string) => onValue({ sessionId: value }),
       }),
+      openRow,
+      openError,
       React.createElement(TextField, {
         id: 'dshwb-panel-session-title',
         label: tr('panel.sessionTitle', '会话标题'),
@@ -262,6 +289,8 @@ function HarnessFields(props: {
       ),
     ),
     status,
+    missing && openRow,
+    openError,
     snapshot.sessions.length === 0 &&
       React.createElement(
         'p',
@@ -380,7 +409,13 @@ function NumberField(props: {
   );
 }
 
-/** The type-specific fields of one panel: reserved text / harness session badge. */
+/**
+ * The type-specific fields of one panel.
+ *
+ * Dispatch goes through the panel-type registry: a type that binds a session
+ * gets the session picker, any other registered type gets its own text field,
+ * and an unregistered (AI-written) type keeps its unknown fields untouched.
+ */
 function TypeFields(props: {
   panel: WorkbenchPanel;
   tr: Translate;
@@ -388,16 +423,15 @@ function TypeFields(props: {
   onValue: (patch: Partial<WorkbenchPanel>) => void;
 }): React.ReactElement {
   const { panel, tr, onValue } = props;
-  if (panel.type === 'reserved') {
-    return React.createElement(TextAreaField, {
-      id: `dshwb-panel-text`,
-      label: tr('panel.text', '占位文本'),
-      value: stringField(panel, 'text'),
-      placeholder: tr('panel.textPlaceholder', '占位面板里显示的文字'),
-      onValue: (value: string) => onValue({ text: value }),
-    });
+  const definition = panelTypeDefinition(panel.type);
+  if (definition === undefined) {
+    return React.createElement(
+      'p',
+      { className: 'dshwb-drawer-hint' },
+      tr('panel.unknownFields', '这个类型没有内置编辑器；它的未知字段会原样保存。'),
+    );
   }
-  if (panel.type === 'harness') {
+  if (definition.bindsSession) {
     return React.createElement(HarnessFields, {
       panel,
       tr,
@@ -405,11 +439,13 @@ function TypeFields(props: {
       onValue,
     });
   }
-  return React.createElement(
-    'p',
-    { className: 'dshwb-drawer-hint' },
-    tr('panel.unknownFields', '这个类型没有内置编辑器；它的未知字段会原样保存。'),
-  );
+  return React.createElement(TextAreaField, {
+    id: `dshwb-panel-text`,
+    label: tr('panel.text', '占位文本'),
+    value: stringField(panel, 'text'),
+    placeholder: tr('panel.textPlaceholder', '占位面板里显示的文字'),
+    onValue: (value: string) => onValue({ text: value }),
+  });
 }
 
 /** The config drawer for one workbench. */
@@ -420,11 +456,13 @@ export function ConfigDrawer(props: ConfigDrawerProps): React.ReactElement {
   const [confirmDeleteId, setConfirmDeleteId] = React.useState<string | null>(null);
   const [addType, setAddType] = React.useState<PanelType>('reserved');
 
-  // Follow a disk reload of the same workbench; keyed by id so typing (which
-  // trims the committed workbench name) never fights the input draft.
+  // Follow a disk reload by content version: the draft is re-synced only when
+  // the committed name no longer matches what it represents, so typing (which
+  // trims the committed name) never fights the input, but an external rename
+  // picked up by Refresh immediately shows up.
   React.useEffect(() => {
-    setNameDraft(workbench.name);
-  }, [workbench.id]);
+    setNameDraft((draft) => syncNameDraft(draft, workbench.name));
+  }, [workbench.id, workbench.name]);
 
   const commitName = (raw: string): void => {
     setNameDraft(raw);

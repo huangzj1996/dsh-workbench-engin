@@ -13,7 +13,7 @@
  * The service may be mounted after this plugin activates, so the lookup is a
  * caller-supplied thunk evaluated per pick instead of a captured instance.
  */
-import { WorkbenchStoreError } from '../../shared/workbench/errors';
+import { WorkbenchStoreError, describeError } from '../../shared/workbench/errors';
 import type { PickRootResult } from '../../shared/workbench/protocol';
 
 /** The `native` capability: one OS chooser, absolute path or `null` on cancel. */
@@ -55,11 +55,6 @@ export function planRootPick(
   return capability !== undefined && isNative(capability) ? { kind: 'native' } : { kind: 'unavailable' };
 }
 
-/** Readable text for a chooser failure, kept to one line for the Client. */
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Open the shell's folder chooser once.
  *
@@ -87,6 +82,6 @@ export async function pickRootDirectory(lookup: DirectoryPickerLookup): Promise<
     }
     return { path: picked.trim() };
   } catch (error) {
-    throw new WorkbenchStoreError('picker-failed', describe(error));
+    throw new WorkbenchStoreError('picker-failed', describeError(error));
   }
 }

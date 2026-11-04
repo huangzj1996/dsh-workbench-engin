@@ -328,6 +328,11 @@ function useCopyToClipboard() {
   return { copied, copy };
 }
 
+// src/shared/workbench/errors.ts
+function describeError(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 // src/shared/workbench/schema.ts
 var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 var DEFAULT_COLS = 4;
@@ -365,6 +370,9 @@ function generateWorkbenchId(name2, takenIds, random = Math.random) {
 function normalizeWorkbenchName(raw) {
   const trimmed = raw.trim();
   return trimmed === "" ? null : trimmed;
+}
+function syncNameDraft(draft, committedName) {
+  return draft.trim() === committedName.trim() ? draft : committedName;
 }
 
 // src/client/create-workbench-dialog.ts
@@ -880,13 +888,14 @@ var React5 = __toESM(require("react"), 1);
 
 // src/client/harness-binding.ts
 var LIST_SEPARATOR = /[,，]/;
+function parsePinTargetText(text) {
+  return text.split(LIST_SEPARATOR).map((item) => item.trim()).filter((item) => item !== "");
+}
 function normalizePinTarget(value) {
   if (Array.isArray(value)) {
     return value.filter((item) => typeof item === "string").map((item) => item.trim()).filter((item) => item !== "");
   }
-  if (typeof value === "string") {
-    return value.split(LIST_SEPARATOR).map((item) => item.trim()).filter((item) => item !== "");
-  }
+  if (typeof value === "string") return parsePinTargetText(value);
   return [];
 }
 function stringField(panel, key) {
@@ -917,6 +926,10 @@ function findSession(snapshot, sessionId) {
   if (id === "") return null;
   return snapshot.sessions.find((session) => session.id === id) ?? null;
 }
+function harnessOpenTarget(binding) {
+  const sessionId = binding.sessionId.trim();
+  return sessionId === "" ? null : sessionId;
+}
 function harnessBadgeView(binding, snapshot) {
   const sessionId = binding.sessionId.trim();
   const storedTitle = binding.sessionTitle.trim();
@@ -930,6 +943,43 @@ function harnessBadgeView(binding, snapshot) {
     title: session.title.trim() !== "" ? session.title : storedTitle,
     running: session.running
   };
+}
+
+// src/client/panel-types.ts
+var PANEL_TYPES = ["reserved", "harness"];
+var PANEL_TYPE_DEFINITIONS = {
+  reserved: {
+    type: "reserved",
+    labelKey: "panel.type.reserved",
+    labelFallback: "占位",
+    titleKey: "panel.new.reserved",
+    titleFallback: "占位面板",
+    defaultFields: () => ({ text: "" }),
+    bindsSession: false
+  },
+  harness: {
+    type: "harness",
+    labelKey: "panel.type.harness",
+    labelFallback: "会话门牌",
+    titleKey: "panel.new.harness",
+    titleFallback: "会话门牌",
+    defaultFields: () => ({ sessionTitle: "", sessionId: "", pinTarget: [] }),
+    bindsSession: true
+  }
+};
+function panelTypeDefinition(type) {
+  return Object.hasOwn(PANEL_TYPE_DEFINITIONS, type) ? PANEL_TYPE_DEFINITIONS[type] : void 0;
+}
+function panelDefaultFields(type) {
+  return PANEL_TYPE_DEFINITIONS[type].defaultFields();
+}
+function panelTypeLabel(tr, type) {
+  const definition = panelTypeDefinition(type);
+  return definition === void 0 ? type : tr(definition.labelKey, definition.labelFallback);
+}
+function panelTypeTitle(tr, type) {
+  const definition = PANEL_TYPE_DEFINITIONS[type];
+  return tr(definition.titleKey, definition.titleFallback);
 }
 
 // src/client/use-session-snapshot.ts
@@ -951,78 +1001,6 @@ function useSessionSnapshot(shell) {
     shell?.refresh();
   }, [shell]);
   return snapshot;
-}
-
-// src/client/workbench-draft.ts
-var PANEL_TYPES = ["reserved", "harness"];
-function nextPanelId(panels) {
-  const taken = new Set(panels.map((panel) => panel.id));
-  let index = 1;
-  while (taken.has(`panel-${index}`)) index += 1;
-  return `panel-${index}`;
-}
-function createPanel(type, panels, title) {
-  const id = nextPanelId(panels);
-  if (type === "harness") {
-    return { id, title, type, sessionTitle: "", sessionId: "", pinTarget: [] };
-  }
-  return { id, title, type, text: "" };
-}
-function createWorkbench(id, name2, panelTitle) {
-  return {
-    id,
-    name: name2,
-    cols: DEFAULT_COLS,
-    panels: [createPanel("reserved", [], panelTitle)]
-  };
-}
-function withPanels(workbench, panels) {
-  return { ...workbench, panels };
-}
-function addPanel(workbench, type, title) {
-  return withPanels(workbench, [...workbench.panels, createPanel(type, workbench.panels, title)]);
-}
-function removePanel(workbench, id) {
-  const panels = workbench.panels.filter((panel) => panel.id !== id);
-  return panels.length === workbench.panels.length ? workbench : withPanels(workbench, panels);
-}
-function movePanel(workbench, id, delta) {
-  const from = workbench.panels.findIndex((panel) => panel.id === id);
-  if (from === -1) return workbench;
-  const to = from + delta;
-  if (to < 0 || to >= workbench.panels.length) return workbench;
-  const panels = [...workbench.panels];
-  const [moved] = panels.splice(from, 1);
-  panels.splice(to, 0, moved);
-  return withPanels(workbench, panels);
-}
-function updatePanel(workbench, id, patch) {
-  const index = workbench.panels.findIndex((panel) => panel.id === id);
-  if (index === -1) return workbench;
-  const next = { ...workbench.panels[index], ...patch };
-  for (const key of Object.keys(patch)) {
-    if (patch[key] === void 0) delete next[key];
-  }
-  const panels = [...workbench.panels];
-  panels[index] = next;
-  return withPanels(workbench, panels);
-}
-function updateWorkbench(workbench, patch) {
-  const next = { ...workbench, ...patch };
-  for (const key of Object.keys(patch)) {
-    if (patch[key] === void 0) delete next[key];
-  }
-  return next;
-}
-function changePanelType(workbench, id, type) {
-  const current = workbench.panels.find((panel) => panel.id === id);
-  if (current === void 0 || current.type === type) return workbench;
-  const next = { ...current, type };
-  const defaults = type === "harness" ? { id, title: current.title, type, sessionTitle: "", sessionId: "", pinTarget: [] } : { id, title: current.title, type, text: "" };
-  for (const key of Object.keys(defaults)) {
-    if (next[key] === void 0) next[key] = defaults[key];
-  }
-  return updatePanel(workbench, id, next);
 }
 
 // src/client/config-drawer.ts
@@ -1057,16 +1035,12 @@ var DRAWER_CSS = `
 .dshwb-drawer select.dshwb-input{color-scheme:dark}
 .dshwb-drawer-hint{margin:0;color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.6}
 .dshwb-session-status{display:flex;align-items:center;gap:6px;margin:-2px 0 10px;color:rgba(226,234,248,.62);font-size:11.5px;line-height:1.5}
+.dshwb-drawer-openrow{display:flex;align-items:center;gap:8px;margin:-2px 0 10px}
 .dshwb-session-dot{flex:0 0 auto;width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,.28)}
 .dshwb-session-dot-running{background:#56a0ff}
 .dshwb-session-dot-warn{background:#ffc454}
 @media (max-width: 900px){.dshwb-drawer{position:absolute;top:0;right:0;bottom:0;z-index:5;flex:none;width:min(380px,88%);max-width:none;box-shadow:-18px 0 48px rgba(0,0,0,.45)}}
 `;
-function panelTypeLabel(tr, type) {
-  if (type === "reserved") return tr("panel.type.reserved", "占位");
-  if (type === "harness") return tr("panel.type.harness", "会话门牌");
-  return type;
-}
 function stringField2(panel, key) {
   const value = panel[key];
   return typeof value === "string" ? value : "";
@@ -1074,9 +1048,6 @@ function stringField2(panel, key) {
 function stringArrayField(panel, key) {
   const value = panel[key];
   return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
-}
-function parseStringList(raw) {
-  return raw.split(",").map((item) => item.trim()).filter((item) => item !== "");
 }
 function rawStringField(panel, key) {
   const value = panel[key];
@@ -1092,6 +1063,35 @@ function HarnessFields(props) {
   const snapshot = useSessionSnapshot(shell);
   const bound = findSession(snapshot, binding.sessionId);
   const missing = snapshot.available && binding.sessionId !== "" && bound === null;
+  const openTarget = harnessOpenTarget(binding);
+  const [openFailed, setOpenFailed] = React5.useState(false);
+  React5.useEffect(() => {
+    setOpenFailed(false);
+  }, [openTarget]);
+  const open = () => {
+    if (openTarget === null) return;
+    setOpenFailed(false);
+    if (shell === void 0 || !shell.openSession(openTarget)) setOpenFailed(true);
+  };
+  const openRow = openTarget === null ? null : React5.createElement(
+    "div",
+    { className: "dshwb-drawer-openrow" },
+    React5.createElement(
+      "button",
+      { type: "button", className: "dshwb-secondary", onClick: open },
+      tr("panel.harness.open", "打开会话")
+    ),
+    React5.createElement(
+      "span",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.harness.openByIdHint", "按保存的会话 id 直接打开")
+    )
+  );
+  const openError = openFailed ? React5.createElement(
+    "p",
+    { className: "dshwb-error", role: "alert" },
+    tr("panel.harness.openFailed", "打不开这条会话：外壳没有提供打开能力。")
+  ) : null;
   const pick = (id) => {
     if (id === "") {
       onValue({ sessionId: "", sessionTitle: "" });
@@ -1107,7 +1107,7 @@ function HarnessFields(props) {
     label: tr("panel.pinTarget", "定位目标"),
     value: stringArrayField(panel, "pinTarget").join(", "),
     placeholder: tr("panel.pinTargetPlaceholder", "多个用逗号分隔"),
-    onValue: (value) => onValue({ pinTarget: parseStringList(value) })
+    onValue: (value) => onValue({ pinTarget: parsePinTargetText(value) })
   });
   if (!snapshot.available) {
     return React5.createElement(
@@ -1128,6 +1128,8 @@ function HarnessFields(props) {
         placeholder: tr("panel.sessionIdPlaceholder", "要打开的会话"),
         onValue: (value) => onValue({ sessionId: value })
       }),
+      openRow,
+      openError,
       React5.createElement(TextField, {
         id: "dshwb-panel-session-title",
         label: tr("panel.sessionTitle", "会话标题"),
@@ -1195,6 +1197,8 @@ function HarnessFields(props) {
       )
     ),
     status,
+    missing && openRow,
+    openError,
     snapshot.sessions.length === 0 && React5.createElement(
       "p",
       { className: "dshwb-drawer-hint" },
@@ -1279,16 +1283,15 @@ function NumberField(props) {
 }
 function TypeFields(props) {
   const { panel, tr, onValue } = props;
-  if (panel.type === "reserved") {
-    return React5.createElement(TextAreaField, {
-      id: `dshwb-panel-text`,
-      label: tr("panel.text", "占位文本"),
-      value: stringField2(panel, "text"),
-      placeholder: tr("panel.textPlaceholder", "占位面板里显示的文字"),
-      onValue: (value) => onValue({ text: value })
-    });
+  const definition = panelTypeDefinition(panel.type);
+  if (definition === void 0) {
+    return React5.createElement(
+      "p",
+      { className: "dshwb-drawer-hint" },
+      tr("panel.unknownFields", "这个类型没有内置编辑器；它的未知字段会原样保存。")
+    );
   }
-  if (panel.type === "harness") {
+  if (definition.bindsSession) {
     return React5.createElement(HarnessFields, {
       panel,
       tr,
@@ -1296,11 +1299,13 @@ function TypeFields(props) {
       onValue
     });
   }
-  return React5.createElement(
-    "p",
-    { className: "dshwb-drawer-hint" },
-    tr("panel.unknownFields", "这个类型没有内置编辑器；它的未知字段会原样保存。")
-  );
+  return React5.createElement(TextAreaField, {
+    id: `dshwb-panel-text`,
+    label: tr("panel.text", "占位文本"),
+    value: stringField2(panel, "text"),
+    placeholder: tr("panel.textPlaceholder", "占位面板里显示的文字"),
+    onValue: (value) => onValue({ text: value })
+  });
 }
 function ConfigDrawer(props) {
   const { workbench, tr } = props;
@@ -1309,8 +1314,8 @@ function ConfigDrawer(props) {
   const [confirmDeleteId, setConfirmDeleteId] = React5.useState(null);
   const [addType, setAddType] = React5.useState("reserved");
   React5.useEffect(() => {
-    setNameDraft(workbench.name);
-  }, [workbench.id]);
+    setNameDraft((draft) => syncNameDraft(draft, workbench.name));
+  }, [workbench.id, workbench.name]);
   const commitName = (raw) => {
     setNameDraft(raw);
     if (normalizeWorkbenchName(raw) !== null) props.onWorkbenchChange({ name: raw.trim() });
@@ -1682,6 +1687,9 @@ var HARNESS_CSS = `
 .dshwb-harness-reason{margin:0;color:rgba(226,234,248,.72);font-size:12px;line-height:1.6}
 .dshwb-harness-error{margin:0;color:#ffb4a8;font-size:11.5px;line-height:1.6}
 .dshwb-harness-degraded{padding:10px 12px;border:1px dashed rgba(255,196,84,.35);border-radius:10px;background:rgba(255,196,84,.06)}
+.dshwb-harness-open{display:inline-flex;align-items:center;align-self:flex-start;margin-top:2px;padding:5px 11px;border:1px solid rgba(255,255,255,.18);border-radius:8px;background:transparent;color:#eef3fb;font-family:inherit;font-size:11.5px;line-height:1.4;cursor:pointer;transition:background .15s ease}
+.dshwb-harness-open:hover{background:rgba(255,255,255,.1)}
+.dshwb-harness-open:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 `;
 function displayTitle(tr, title, sessionId) {
   if (title !== "") return title;
@@ -1693,15 +1701,25 @@ function HarnessPanel(props) {
   const snapshot = useSessionSnapshot(shell);
   const view = harnessBadgeView(binding, snapshot);
   const [openFailed, setOpenFailed] = React6.useState(false);
-  const boundId = view.kind === "bound" ? view.sessionId : "";
+  const openTarget = harnessOpenTarget(binding);
   React6.useEffect(() => {
     setOpenFailed(false);
-  }, [boundId]);
+  }, [openTarget]);
   const open = () => {
-    if (view.kind !== "bound") return;
+    if (openTarget === null) return;
     setOpenFailed(false);
-    if (shell === void 0 || !shell.openSession(view.sessionId)) setOpenFailed(true);
+    if (shell === void 0 || !shell.openSession(openTarget)) setOpenFailed(true);
   };
+  const openButton = () => React6.createElement(
+    "button",
+    {
+      type: "button",
+      className: "dshwb-harness-open",
+      title: tr("panel.harness.openByIdHint", "按保存的会话 id 直接打开"),
+      onClick: open
+    },
+    tr("panel.harness.open", "打开会话")
+  );
   let body;
   if (view.kind === "bound") {
     body = React6.createElement(
@@ -1753,9 +1771,10 @@ function HarnessPanel(props) {
       React6.createElement(
         "p",
         { className: "dshwb-harness-reason" },
-        tr("panel.harness.missing", "绑定的会话不存在或不可读；在配置里重新选一条。")
+        tr("panel.harness.missing", "绑定的会话不存在或不可读；仍可按 id 尝试打开，或在配置里重新选一条。")
       ),
-      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId)
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId),
+      openTarget !== null && openButton()
     );
   } else {
     body = React6.createElement(
@@ -1769,9 +1788,10 @@ function HarnessPanel(props) {
       React6.createElement(
         "p",
         { className: "dshwb-harness-reason" },
-        tr("panel.harness.unavailable", "读不到外壳的会话列表，暂时无法显示会话状态。")
+        tr("panel.harness.unavailable", "读不到外壳的会话列表，暂时无法显示会话状态；仍可按 id 尝试打开。")
       ),
-      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId)
+      React6.createElement("p", { className: "dshwb-harness-id" }, view.sessionId),
+      openTarget !== null && openButton()
     );
   }
   return React6.createElement(
@@ -1805,10 +1825,11 @@ function ReservedPanel(props) {
 }
 
 // src/client/renderers/index.ts
-var PANEL_RENDERERS = {
+var RENDERERS = {
   reserved: ReservedPanel,
   harness: HarnessPanel
 };
+var PANEL_RENDERERS = RENDERERS;
 function panelRenderer(type) {
   return Object.hasOwn(PANEL_RENDERERS, type) ? PANEL_RENDERERS[type] : void 0;
 }
@@ -1924,6 +1945,72 @@ function PanelFrame(props) {
   );
 }
 
+// src/client/workbench-draft.ts
+function nextPanelId(panels) {
+  const taken = new Set(panels.map((panel) => panel.id));
+  let index = 1;
+  while (taken.has(`panel-${index}`)) index += 1;
+  return `panel-${index}`;
+}
+function createPanel(type, panels, title) {
+  return { id: nextPanelId(panels), title, type, ...panelDefaultFields(type) };
+}
+function createWorkbench(id, name2, panelTitle) {
+  return {
+    id,
+    name: name2,
+    cols: DEFAULT_COLS,
+    panels: [createPanel("reserved", [], panelTitle)]
+  };
+}
+function withPanels(workbench, panels) {
+  return { ...workbench, panels };
+}
+function addPanel(workbench, type, title) {
+  return withPanels(workbench, [...workbench.panels, createPanel(type, workbench.panels, title)]);
+}
+function removePanel(workbench, id) {
+  const panels = workbench.panels.filter((panel) => panel.id !== id);
+  return panels.length === workbench.panels.length ? workbench : withPanels(workbench, panels);
+}
+function movePanel(workbench, id, delta) {
+  const from = workbench.panels.findIndex((panel) => panel.id === id);
+  if (from === -1) return workbench;
+  const to = from + delta;
+  if (to < 0 || to >= workbench.panels.length) return workbench;
+  const panels = [...workbench.panels];
+  const [moved] = panels.splice(from, 1);
+  panels.splice(to, 0, moved);
+  return withPanels(workbench, panels);
+}
+function updatePanel(workbench, id, patch) {
+  const index = workbench.panels.findIndex((panel) => panel.id === id);
+  if (index === -1) return workbench;
+  const next = { ...workbench.panels[index], ...patch };
+  for (const key of Object.keys(patch)) {
+    if (patch[key] === void 0) delete next[key];
+  }
+  const panels = [...workbench.panels];
+  panels[index] = next;
+  return withPanels(workbench, panels);
+}
+function updateWorkbench(workbench, patch) {
+  const next = { ...workbench, ...patch };
+  for (const key of Object.keys(patch)) {
+    if (patch[key] === void 0) delete next[key];
+  }
+  return next;
+}
+function changePanelType(workbench, id, type) {
+  const current = workbench.panels.find((panel) => panel.id === id);
+  if (current === void 0 || current.type === type) return workbench;
+  const next = { ...current, type };
+  for (const [key, value] of Object.entries(panelDefaultFields(type))) {
+    if (next[key] === void 0) next[key] = value;
+  }
+  return updatePanel(workbench, id, next);
+}
+
 // src/client/workbench-status.ts
 var WORKBENCH_STATUS_LABEL_KEYS = {
   adopted: "list.status.adopted",
@@ -1960,10 +2047,6 @@ var WORKBENCH_EDITOR_CSS = `
 .dshwb-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-confirm-text{flex:0 1 auto;max-width:260px;color:#ffb4a8;font-size:11.5px;line-height:1.5}
 `;
-function readableError(error) {
-  if (error instanceof WorkbenchRpcError) return error.message;
-  return error instanceof Error ? error.message : String(error);
-}
 function WorkbenchEditor(props) {
   const { tr, client } = props;
   const [workbench, setWorkbench] = React10.useState(props.workbench);
@@ -1985,41 +2068,49 @@ function WorkbenchEditor(props) {
   const timerRef = React10.useRef(null);
   const seqRef = React10.useRef(0);
   const deletingRef = React10.useRef(false);
+  const inFlightRef = React10.useRef(null);
   const clearTimer = React10.useCallback(() => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
   }, []);
-  const flush = React10.useCallback(async () => {
+  const flush = React10.useCallback(() => {
     clearTimer();
     const target = workbenchRef.current;
-    if (target === lastSavedRef.current) return true;
+    if (target === lastSavedRef.current) return Promise.resolve(true);
     const seq = seqRef.current + 1;
     seqRef.current = seq;
     setSaving(true);
-    try {
-      const saved = (await client.save(target)).workbench;
-      if (seq !== seqRef.current) return true;
-      lastSavedRef.current = saved;
-      setLastSaved(saved);
-      retryWorkbenchRef.current = null;
-      setSaveError(null);
-      if (workbenchRef.current === target) {
-        workbenchRef.current = saved;
-        setWorkbench(saved);
+    const run = (async () => {
+      try {
+        const saved = (await client.save(target)).workbench;
+        if (seq !== seqRef.current) return true;
+        lastSavedRef.current = saved;
+        setLastSaved(saved);
+        retryWorkbenchRef.current = null;
+        setSaveError(null);
+        if (workbenchRef.current === target) {
+          workbenchRef.current = saved;
+          setWorkbench(saved);
+        }
+        return true;
+      } catch (error) {
+        if (seq !== seqRef.current) return false;
+        setSaveError(describeError(error));
+        retryWorkbenchRef.current = target;
+        workbenchRef.current = lastSavedRef.current;
+        setWorkbench(lastSavedRef.current);
+        return false;
+      } finally {
+        if (seq === seqRef.current) setSaving(false);
       }
-      return true;
-    } catch (error) {
-      if (seq !== seqRef.current) return false;
-      setSaveError(readableError(error));
-      retryWorkbenchRef.current = target;
-      workbenchRef.current = lastSavedRef.current;
-      setWorkbench(lastSavedRef.current);
-      return false;
-    } finally {
-      if (seq === seqRef.current) setSaving(false);
-    }
+    })();
+    inFlightRef.current = run;
+    void run.finally(() => {
+      if (inFlightRef.current === run) inFlightRef.current = null;
+    });
+    return run;
   }, [clearTimer, client]);
   React10.useEffect(() => {
     if (workbench === lastSaved) return;
@@ -2092,6 +2183,7 @@ function WorkbenchEditor(props) {
     retryWorkbenchRef.current = null;
     deletingRef.current = true;
     clearTimer();
+    if (inFlightRef.current !== null) await inFlightRef.current;
     try {
       await client.delete(id);
       workbenchRef.current = lastSavedRef.current;
@@ -2099,7 +2191,7 @@ function WorkbenchEditor(props) {
       await props.onDeleted(id);
     } catch (error) {
       deletingRef.current = false;
-      setActionError(readableError(error));
+      setActionError(describeError(error));
     } finally {
       setDeleting(false);
     }
@@ -2114,8 +2206,7 @@ function WorkbenchEditor(props) {
     setWorkbench((current) => updateWorkbench(current, patch));
   };
   const onAddPanel = (type) => {
-    const title = type === "harness" ? tr("panel.new.harness", "会话门牌") : tr("panel.new.reserved", "占位面板");
-    const next = addPanel(workbenchRef.current, type, title);
+    const next = addPanel(workbenchRef.current, type, panelTypeTitle(tr, type));
     const added = next.panels[next.panels.length - 1];
     if (added !== void 0) setSelectedPanelId(added.id);
     setWorkbench(next);
@@ -2358,6 +2449,11 @@ var PANEL_CSS = `
 .dshwb-item:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
 .dshwb-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-item-chevron{flex:0 0 auto;color:rgba(226,234,248,.45);font-size:15px;line-height:1}
+.dshwb-row{display:flex;flex-direction:column;gap:6px;width:100%}
+.dshwb-item-static{cursor:default}
+.dshwb-item-static:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12)}
+.dshwb-row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 6px 2px}
+.dshwb-row-confirm{color:#ffd88e;font-size:11.5px;line-height:1.5}
 .dshwb-content-workbench{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
 .dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
 .dshwb-workbench-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
@@ -2387,10 +2483,6 @@ var PANEL_CSS = `
 .dshwb-idrow{display:flex;align-items:center;gap:8px}
 .dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
 `;
-function readableError2(error) {
-  if (error instanceof WorkbenchRpcError) return error.message;
-  return error instanceof Error ? error.message : String(error);
-}
 function HelloPanel(props) {
   const translate = props.t;
   const tr = React11.useCallback(
@@ -2413,6 +2505,9 @@ function HelloPanel(props) {
   const [view, setView] = React11.useState({ kind: "list" });
   const [creating, setCreating] = React11.useState(false);
   const [drawerOpen, setDrawerOpen] = React11.useState(false);
+  const [confirmingCleanupId, setConfirmingCleanupId] = React11.useState(null);
+  const [cleaningUp, setCleaningUp] = React11.useState(false);
+  const [cleanupError, setCleanupError] = React11.useState(null);
   const storage = React11.useMemo(() => browserStorage(), []);
   const viewRef = React11.useRef(view);
   viewRef.current = view;
@@ -2451,7 +2546,7 @@ function HelloPanel(props) {
       const list = await rpc.list();
       setState({ phase: "ready", root: list.root, entries: list.entries });
     } catch (error) {
-      setState({ phase: "error", message: readableError2(error) });
+      setState({ phase: "error", message: describeError(error) });
     }
   }, [rpc, tr]);
   React11.useEffect(() => {
@@ -2474,7 +2569,23 @@ function HelloPanel(props) {
         } : current
       );
     } catch (error) {
-      setView({ kind: "open-error", id, message: readableError2(error) });
+      setView({ kind: "open-error", id, message: describeError(error) });
+    }
+  };
+  const cleanupEntry = async (id) => {
+    if (rpc === void 0 || cleaningUp) return;
+    setCleaningUp(true);
+    setCleanupError(null);
+    try {
+      await rpc.delete(id);
+      setConfirmingCleanupId(null);
+      if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+    } catch (error) {
+      setCleanupError(describeError(error));
+    } finally {
+      setCleaningUp(false);
     }
   };
   const refresh = async () => {
@@ -2494,10 +2605,10 @@ function HelloPanel(props) {
         const { workbench } = await rpc.read(current.workbench.id);
         setView({ kind: "workbench", workbench });
       } catch (error) {
-        setView({ kind: "open-error", id: current.workbench.id, message: readableError2(error) });
+        setView({ kind: "open-error", id: current.workbench.id, message: describeError(error) });
       }
     } catch (error) {
-      setState({ phase: "error", message: readableError2(error) });
+      setState({ phase: "error", message: describeError(error) });
     }
   };
   React11.useEffect(() => {
@@ -2523,7 +2634,7 @@ function HelloPanel(props) {
       }
       await openWorkbench(next);
     } catch (error) {
-      setState({ phase: "error", message: readableError2(error) });
+      setState({ phase: "error", message: describeError(error) });
     }
   };
   const startEditing = (prefill) => {
@@ -2548,7 +2659,7 @@ function HelloPanel(props) {
       setPickFallback(null);
       setAttempt((value) => value + 1);
     } catch (error) {
-      setSaveError(readableError2(error));
+      setSaveError(describeError(error));
     } finally {
       setSavingRoot(false);
     }
@@ -2705,23 +2816,17 @@ function HelloPanel(props) {
         )
       )
     ) : React11.createElement(
-      "ul",
-      { className: "dshwb-list" },
-      entries.map(
-        (entry) => React11.createElement(
-          "li",
-          { key: entry.id },
-          React11.createElement(
-            "button",
-            {
-              type: "button",
-              className: "dshwb-item",
-              title: entry.name,
-              onClick: () => void openWorkbench(entry.id)
-            },
+      React11.Fragment,
+      null,
+      React11.createElement(
+        "ul",
+        { className: "dshwb-list" },
+        entries.map((entry) => {
+          const openable = isOpenable(entry);
+          const rowBody = [
             React11.createElement(
               "span",
-              { className: "dshwb-item-main" },
+              { key: "main", className: "dshwb-item-main" },
               React11.createElement(
                 "span",
                 { className: "dshwb-item-headline" },
@@ -2740,11 +2845,84 @@ function HelloPanel(props) {
             ),
             // Missing/corrupt entries have no readable name, so the Host
             // reports the id as the name: never show the id twice.
-            entry.name !== entry.id && React11.createElement("span", { className: "dshwb-item-id" }, entry.id),
-            React11.createElement("span", { className: "dshwb-item-chevron", "aria-hidden": true }, "›")
-          )
-        )
-      )
+            entry.name !== entry.id && React11.createElement(
+              "span",
+              { key: "id", className: "dshwb-item-id" },
+              entry.id
+            ),
+            openable && React11.createElement(
+              "span",
+              { key: "chevron", className: "dshwb-item-chevron", "aria-hidden": true },
+              "›"
+            )
+          ];
+          return React11.createElement(
+            "li",
+            { key: entry.id, className: "dshwb-row" },
+            openable ? React11.createElement(
+              "button",
+              {
+                type: "button",
+                className: "dshwb-item",
+                title: entry.name,
+                onClick: () => void openWorkbench(entry.id)
+              },
+              rowBody
+            ) : React11.createElement("div", { className: "dshwb-item dshwb-item-static" }, rowBody),
+            !openable && React11.createElement(
+              "div",
+              { className: "dshwb-row-actions" },
+              confirmingCleanupId === entry.id ? React11.createElement(
+                React11.Fragment,
+                null,
+                React11.createElement(
+                  "span",
+                  { className: "dshwb-row-confirm" },
+                  entry.status === "missing" ? tr(
+                    "list.cleanup.missing",
+                    "清理这条登记？工作台目录已不存在，只会移除索引里的登记。"
+                  ) : tr(
+                    "list.cleanup.corrupt",
+                    "清理这条登记？会删除损坏的工作台目录与索引登记，无法撤销。"
+                  )
+                ),
+                React11.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dshwb-link dshwb-link-danger",
+                    disabled: cleaningUp,
+                    onClick: () => void cleanupEntry(entry.id)
+                  },
+                  cleaningUp ? tr("list.cleanup.working", "清理中…") : tr("list.cleanup.confirm", "确认清理")
+                ),
+                React11.createElement(
+                  "button",
+                  {
+                    type: "button",
+                    className: "dshwb-link",
+                    disabled: cleaningUp,
+                    onClick: () => setConfirmingCleanupId(null)
+                  },
+                  tr("list.cleanup.cancel", "取消")
+                )
+              ) : React11.createElement(
+                "button",
+                {
+                  type: "button",
+                  className: "dshwb-link dshwb-link-danger",
+                  onClick: () => {
+                    setCleanupError(null);
+                    setConfirmingCleanupId(entry.id);
+                  }
+                },
+                tr("list.cleanup", "清理登记")
+              )
+            )
+          );
+        })
+      ),
+      cleanupError !== null && React11.createElement("p", { className: "dshwb-error", role: "alert" }, cleanupError)
     )
   );
   const renderWorkbenchEditor = (workbench) => {
@@ -3116,6 +3294,12 @@ var zh = {
   "list.status.missing.hint": "索引里有登记，但工作台目录或 JSON 已不在；不会自动删除登记。",
   "list.status.corrupt": "损坏",
   "list.status.corrupt.hint": "工作台 JSON 无法解析；修好文件后点「刷新」即可恢复。",
+  "list.cleanup": "清理登记",
+  "list.cleanup.missing": "清理这条登记？工作台目录已不存在，只会移除索引里的登记。",
+  "list.cleanup.corrupt": "清理这条登记？会删除损坏的工作台目录与索引登记，无法撤销。",
+  "list.cleanup.confirm": "确认清理",
+  "list.cleanup.cancel": "取消",
+  "list.cleanup.working": "清理中…",
   "workbench.back": "返回列表",
   "workbench.refresh": "刷新",
   "workbench.opening": "正在打开…",
@@ -3181,10 +3365,12 @@ var zh = {
   "panel.sessions.empty": "外壳里还没有会话，先去侧栏建一条。",
   "panel.harness.untitled": "未命名会话",
   "panel.harness.openHint": "点击打开这条会话",
+  "panel.harness.open": "打开会话",
+  "panel.harness.openByIdHint": "按保存的会话 id 直接打开",
   "panel.harness.openFailed": "打不开这条会话：外壳没有提供打开能力。",
   "panel.harness.unbound": "还没有绑定会话：在配置里选一条会话。",
-  "panel.harness.missing": "绑定的会话不存在或不可读；在配置里重新选一条。",
-  "panel.harness.unavailable": "读不到外壳的会话列表，暂时无法显示会话状态。",
+  "panel.harness.missing": "绑定的会话不存在或不可读；仍可按 id 尝试打开，或在配置里重新选一条。",
+  "panel.harness.unavailable": "读不到外壳的会话列表，暂时无法显示会话状态；仍可按 id 尝试打开。",
   "panel.harness.running": "运行中",
   "panel.harness.idle": "空闲",
   "panel.unknownFields": "这个类型没有内置编辑器；它的未知字段会原样保存。",
@@ -3249,6 +3435,12 @@ var en = {
   "list.status.missing.hint": "Still in the index, but its folder or JSON is gone; the entry is never deleted automatically.",
   "list.status.corrupt": "Corrupt",
   "list.status.corrupt.hint": "The workbench JSON cannot be parsed; fix the file and hit Refresh.",
+  "list.cleanup": "Remove entry",
+  "list.cleanup.missing": "Remove this index entry? The folder is already gone, so only the entry is dropped.",
+  "list.cleanup.corrupt": "Remove this entry? The damaged folder and its index entry are deleted; this cannot be undone.",
+  "list.cleanup.confirm": "Remove",
+  "list.cleanup.cancel": "Cancel",
+  "list.cleanup.working": "Removing…",
   "workbench.back": "Back to list",
   "workbench.refresh": "Refresh",
   "workbench.opening": "Opening…",
@@ -3314,10 +3506,12 @@ var en = {
   "panel.sessions.empty": "The shell has no session yet; create one from the sidebar first.",
   "panel.harness.untitled": "Untitled session",
   "panel.harness.openHint": "Click to open this session",
+  "panel.harness.open": "Open session",
+  "panel.harness.openByIdHint": "Open by the saved session id",
   "panel.harness.openFailed": "Could not open this session: the shell offers no open capability.",
   "panel.harness.unbound": "No session bound yet — pick one in the settings.",
-  "panel.harness.missing": "The bound session is missing or unreadable; pick another one in the settings.",
-  "panel.harness.unavailable": "The shell session list is unreadable, so the session status cannot be shown.",
+  "panel.harness.missing": "The bound session is missing or unreadable; you can still try opening it by id, or pick another one in the settings.",
+  "panel.harness.unavailable": "The shell session list is unreadable, so the session status cannot be shown; you can still try opening it by id.",
   "panel.harness.running": "Running",
   "panel.harness.idle": "Idle",
   "panel.unknownFields": "This type has no built-in editor; its unknown fields are saved as-is.",

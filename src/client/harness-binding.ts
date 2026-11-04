@@ -29,6 +29,19 @@ export interface HarnessSessionRef {
 const LIST_SEPARATOR = /[,，]/;
 
 /**
+ * Parse one text input into the `pinTarget` array form.
+ *
+ * The single parser for text: the drawer's input and a string an AI wrote into
+ * the JSON both go through it, so the two entry points cannot drift.
+ */
+export function parsePinTargetText(text: string): string[] {
+  return text
+    .split(LIST_SEPARATOR)
+    .map((item) => item.trim())
+    .filter((item) => item !== '');
+}
+
+/**
  * Coerce a raw `pinTarget` JSON value into the string array the config expects.
  *
  * Public workbench configs arrive as arrays, but an AI may have written a single
@@ -42,12 +55,7 @@ export function normalizePinTarget(value: unknown): string[] {
       .map((item) => item.trim())
       .filter((item) => item !== '');
   }
-  if (typeof value === 'string') {
-    return value
-      .split(LIST_SEPARATOR)
-      .map((item) => item.trim())
-      .filter((item) => item !== '');
-  }
+  if (typeof value === 'string') return parsePinTargetText(value);
   return [];
 }
 

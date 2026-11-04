@@ -4,6 +4,7 @@ import {
   bindingPatch,
   harnessBinding,
   normalizePinTarget,
+  parsePinTargetText,
   type HarnessSessionRef,
 } from '../harness-binding';
 import {
@@ -30,6 +31,18 @@ function harnessPanel(fields: Partial<WorkbenchPanel> = {}): WorkbenchPanel {
 function picked(id: string, title = ''): HarnessSessionRef {
   return { id, title };
 }
+
+describe('parsePinTargetText', () => {
+  it('splits the drawer input on both the ASCII and the Chinese comma', () => {
+    expect(parsePinTargetText('a, b，c')).toEqual(['a', 'b', 'c']);
+  });
+
+  it('trims entries and drops blank ones, so one parser serves the drawer and the JSON', () => {
+    expect(parsePinTargetText(' a ，, b , ')).toEqual(['a', 'b']);
+    expect(parsePinTargetText('')).toEqual([]);
+    expect(parsePinTargetText(' ， , ')).toEqual([]);
+  });
+});
 
 describe('normalizePinTarget', () => {
   it('keeps a string array, trimming entries and dropping blanks and non-strings', () => {

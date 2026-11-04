@@ -5,6 +5,7 @@
  * HTTP-agnostic below `route`: tests call `dispatch` directly, while the Host
  * entry registers `route` on `connection.fetch`.
  */
+import { describeError } from '../../shared/workbench/errors';
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import type { WorkbenchRpcMethod, WorkbenchRpcResult } from '../../shared/workbench/protocol';
 import { pickRootDirectory, type DirectoryPickerLookup } from './picker';
@@ -42,7 +43,7 @@ function failure(error: unknown): WorkbenchRpcResult {
   }
   return {
     ok: false,
-    error: { code: 'internal', message: error instanceof Error ? error.message : String(error) },
+    error: { code: 'internal', message: describeError(error) },
   };
 }
 

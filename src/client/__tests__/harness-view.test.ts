@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { HarnessBinding } from '../harness-binding';
-import { findSession, harnessBadgeView } from '../harness-view';
+import { findSession, harnessBadgeView, harnessOpenTarget } from '../harness-view';
 import type { HarnessSessionSnapshot } from '../session-shell';
 
 /** A binding with the three fields; overrides merge in. */
@@ -32,6 +32,18 @@ describe('findSession', () => {
     expect(findSession(snapshot(rows), 's-2')?.title).toBe('乙');
     expect(findSession(snapshot(rows), 'ghost')).toBeNull();
     expect(findSession(snapshot(rows), '  ')).toBeNull();
+  });
+});
+
+describe('harnessOpenTarget', () => {
+  it('is the trimmed session id whenever the panel stores one', () => {
+    expect(harnessOpenTarget(binding())).toBe('s-1');
+    expect(harnessOpenTarget(binding({ sessionId: '  s-9 ' }))).toBe('s-9');
+  });
+
+  it('is null for an unbound panel, even when a title is cached', () => {
+    expect(harnessOpenTarget(binding({ sessionId: '', sessionTitle: '旧标题' }))).toBeNull();
+    expect(harnessOpenTarget(binding({ sessionId: '   ' }))).toBeNull();
   });
 });
 

@@ -22,12 +22,13 @@ import {
   removePanel,
   updatePanel,
   updateWorkbench,
-  type PanelType,
 } from './workbench-draft';
-import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
+import { panelTypeTitle, type PanelType } from './panel-types';
+import type { WorkbenchClient } from './rpc';
 import type { SessionShell } from './session-shell';
 import { workbenchOptionLabel } from './workbench-status';
 import { DEFAULT_COLS, type WorkbenchPanel, type Workbench } from '../shared/workbench/schema';
+import { describeError } from '../shared/workbench/errors';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
 import type { Translate } from './translate';
 
@@ -72,12 +73,6 @@ export interface WorkbenchEditorProps {
   onCreateWorkbench: () => void;
 }
 
-/** Readable message for any RPC/other failure. */
-function readableError(error: unknown): string {
-  if (error instanceof WorkbenchRpcError) return error.message;
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** The editor for one workbench. */
 export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement {
   const { tr, client } = props;
@@ -104,6 +99,8 @@ export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement
   const seqRef = React.useRef(0);
   /** Set before a delete so the unmount safety net cannot re-create the folder. */
   const deletingRef = React.useRef(false);
+  /** The save currently on the wire, so delete can wait for it instead of racing. */
+  const inFlightRef = React.useRef<Promise<boolean> | null>(null);
 
   const clearTimer = React.useCallback((): void => {
     if (timerRef.current !== null) {
@@ -116,39 +113,46 @@ export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement
    * Save the live workbench now (cancelling the debounce). Returns false when the
    * save failed, so navigation can stay on the panel and show the error.
    */
-  const flush = React.useCallback(async (): Promise<boolean> => {
+  const flush = React.useCallback((): Promise<boolean> => {
     clearTimer();
     const target = workbenchRef.current;
-    if (target === lastSavedRef.current) return true;
+    if (target === lastSavedRef.current) return Promise.resolve(true);
     const seq = seqRef.current + 1;
     seqRef.current = seq;
     setSaving(true);
-    try {
-      const saved = (await client.save(target)).workbench;
-      if (seq !== seqRef.current) return true;
-      lastSavedRef.current = saved;
-      setLastSaved(saved);
-      retryWorkbenchRef.current = null;
-      setSaveError(null);
-      if (workbenchRef.current === target) {
-        // Treat the saved copy as current immediately, so the unmount safety
-        // net below does not write the same workbench a second time.
-        workbenchRef.current = saved;
-        setWorkbench(saved);
+    const run = (async (): Promise<boolean> => {
+      try {
+        const saved = (await client.save(target)).workbench;
+        if (seq !== seqRef.current) return true;
+        lastSavedRef.current = saved;
+        setLastSaved(saved);
+        retryWorkbenchRef.current = null;
+        setSaveError(null);
+        if (workbenchRef.current === target) {
+          // Treat the saved copy as current immediately, so the unmount safety
+          // net below does not write the same workbench a second time.
+          workbenchRef.current = saved;
+          setWorkbench(saved);
+        }
+        return true;
+      } catch (error) {
+        if (seq !== seqRef.current) return false;
+        setSaveError(describeError(error));
+        retryWorkbenchRef.current = target;
+        // Fall back to the last version we know is on disk, and make the ref agree
+        // so an unmount right now cannot resurrect the failed draft.
+        workbenchRef.current = lastSavedRef.current;
+        setWorkbench(lastSavedRef.current);
+        return false;
+      } finally {
+        if (seq === seqRef.current) setSaving(false);
       }
-      return true;
-    } catch (error) {
-      if (seq !== seqRef.current) return false;
-      setSaveError(readableError(error));
-      retryWorkbenchRef.current = target;
-      // Fall back to the last version we know is on disk, and make the ref agree
-      // so an unmount right now cannot resurrect the failed draft.
-      workbenchRef.current = lastSavedRef.current;
-      setWorkbench(lastSavedRef.current);
-      return false;
-    } finally {
-      if (seq === seqRef.current) setSaving(false);
-    }
+    })();
+    inFlightRef.current = run;
+    void run.finally(() => {
+      if (inFlightRef.current === run) inFlightRef.current = null;
+    });
+    return run;
   }, [clearTimer, client]);
 
   // Debounce: every change schedules one save 300ms after the last edit.
@@ -246,6 +250,10 @@ export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement
     retryWorkbenchRef.current = null;
     deletingRef.current = true;
     clearTimer();
+    // Let a save that is already on the wire land first: the delete then removes
+    // exactly the version that reached disk, and the Host tombstone rejects any
+    // save that still races in after this point.
+    if (inFlightRef.current !== null) await inFlightRef.current;
     try {
       await client.delete(id);
       // The unmount right after this must not write the removed workbench back.
@@ -254,7 +262,7 @@ export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement
       await props.onDeleted(id);
     } catch (error) {
       deletingRef.current = false;
-      setActionError(readableError(error));
+      setActionError(describeError(error));
     } finally {
       setDeleting(false);
     }
@@ -273,11 +281,7 @@ export function WorkbenchEditor(props: WorkbenchEditorProps): React.ReactElement
   };
 
   const onAddPanel = (type: PanelType): void => {
-    const title =
-      type === 'harness'
-        ? tr('panel.new.harness', '会话门牌')
-        : tr('panel.new.reserved', '占位面板');
-    const next = addPanel(workbenchRef.current, type, title);
+    const next = addPanel(workbenchRef.current, type, panelTypeTitle(tr, type));
     const added = next.panels[next.panels.length - 1];
     if (added !== undefined) setSelectedPanelId(added.id);
     setWorkbench(next);

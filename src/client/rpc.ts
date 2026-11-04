@@ -6,6 +6,7 @@
  * payload })`. Failures are rethrown as `WorkbenchRpcError` with the Host's
  * stable `code` and its readable Chinese `message`.
  */
+import type { WorkbenchErrorCode } from '../shared/workbench/errors';
 import type {
   PickRootResult,
   RootConfig,
@@ -24,9 +25,9 @@ const CONNECTION_WAIT_MS = 5000;
 
 /** A failed workbench RPC; `code` is the Host contract code. */
 export class WorkbenchRpcError extends Error {
-  readonly code: string;
+  readonly code: WorkbenchErrorCode;
 
-  constructor(code: string, message: string) {
+  constructor(code: WorkbenchErrorCode, message: string) {
     super(message);
     this.name = 'WorkbenchRpcError';
     this.code = code;

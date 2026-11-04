@@ -32,6 +32,18 @@ export function findSession(
   return snapshot.sessions.find((session) => session.id === id) ?? null;
 }
 
+/**
+ * The session a badge can ask the shell to open.
+ *
+ * Resolution goes through the stored id, so a badge stays clickable even while
+ * the shell list is missing it (a missing session can still be opened by id);
+ * only a panel with no id at all has nothing to open.
+ */
+export function harnessOpenTarget(binding: HarnessBinding): string | null {
+  const sessionId = binding.sessionId.trim();
+  return sessionId === '' ? null : sessionId;
+}
+
 /** Decide the badge body for one panel binding and the current shell snapshot. */
 export function harnessBadgeView(
   binding: HarnessBinding,

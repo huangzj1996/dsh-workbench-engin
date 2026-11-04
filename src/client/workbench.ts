@@ -34,6 +34,7 @@ import {
   WORKBENCH_STATUS_LABEL_KEYS,
   isOpenable,
 } from './workbench-status';
+import { describeError } from '../shared/workbench/errors';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
 import type { Workbench } from '../shared/workbench/schema';
 
@@ -79,6 +80,11 @@ const PANEL_CSS = `
 .dshwb-item:hover{background:rgba(255,255,255,.09);border-color:rgba(255,255,255,.2)}
 .dshwb-item:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-item-chevron{flex:0 0 auto;color:rgba(226,234,248,.45);font-size:15px;line-height:1}
+.dshwb-row{display:flex;flex-direction:column;gap:6px;width:100%}
+.dshwb-item-static{cursor:default}
+.dshwb-item-static:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.12)}
+.dshwb-row-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:0 6px 2px}
+.dshwb-row-confirm{color:#ffd88e;font-size:11.5px;line-height:1.5}
 .dshwb-content-workbench{align-items:stretch;justify-content:stretch;padding:16px 18px;overflow:hidden}
 .dshwb-workbench{display:flex;flex-direction:column;gap:10px;width:100%;height:100%;min-height:0;text-align:left}
 .dshwb-workbench-bar{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
@@ -133,12 +139,6 @@ export interface HelloPanelProps {
   shell?: SessionShell;
 }
 
-/** Readable message for any RPC/other failure. */
-function readableError(error: unknown): string {
-  if (error instanceof WorkbenchRpcError) return error.message;
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** The central panel: hero backdrop + first-run root setup + the workbench list. */
 export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const translate = props.t;
@@ -166,6 +166,10 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const [creating, setCreating] = React.useState(false);
   /** Drawer preference, carried across workbench switches (create opens it). */
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+  /** Missing/corrupt entry whose cleanup is being confirmed in the list. */
+  const [confirmingCleanupId, setConfirmingCleanupId] = React.useState<string | null>(null);
+  const [cleaningUp, setCleaningUp] = React.useState(false);
+  const [cleanupError, setCleanupError] = React.useState<string | null>(null);
 
   /** The panel's session memory (last used workbench); null when unavailable. */
   const storage = React.useMemo(() => browserStorage(), []);
@@ -213,7 +217,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       const list = await rpc.list();
       setState({ phase: 'ready', root: list.root, entries: list.entries });
     } catch (error) {
-      setState({ phase: 'error', message: readableError(error) });
+      setState({ phase: 'error', message: describeError(error) });
     }
   }, [rpc, tr]);
 
@@ -245,7 +249,30 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
           : current,
       );
     } catch (error) {
-      setView({ kind: 'open-error', id, message: readableError(error) });
+      setView({ kind: 'open-error', id, message: describeError(error) });
+    }
+  };
+
+  /**
+   * Remove a missing/corrupt list entry after the user confirms.
+   *
+   * Missing entries only lose their index row; corrupt ones also drop the
+   * damaged folder. The refresh afterwards makes both cases visible.
+   */
+  const cleanupEntry = async (id: string): Promise<void> => {
+    if (rpc === undefined || cleaningUp) return;
+    setCleaningUp(true);
+    setCleanupError(null);
+    try {
+      await rpc.delete(id);
+      setConfirmingCleanupId(null);
+      if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+      const list = await rpc.list();
+      setState({ phase: 'ready', root: list.root, entries: list.entries });
+    } catch (error) {
+      setCleanupError(describeError(error));
+    } finally {
+      setCleaningUp(false);
     }
   };
 
@@ -270,10 +297,10 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         const { workbench } = await rpc.read(current.workbench.id);
         setView({ kind: 'workbench', workbench });
       } catch (error) {
-        setView({ kind: 'open-error', id: current.workbench.id, message: readableError(error) });
+        setView({ kind: 'open-error', id: current.workbench.id, message: describeError(error) });
       }
     } catch (error) {
-      setState({ phase: 'error', message: readableError(error) });
+      setState({ phase: 'error', message: describeError(error) });
     }
   };
 
@@ -303,7 +330,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       }
       await openWorkbench(next);
     } catch (error) {
-      setState({ phase: 'error', message: readableError(error) });
+      setState({ phase: 'error', message: describeError(error) });
     }
   };
 
@@ -335,7 +362,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       setPickFallback(null);
       setAttempt((value) => value + 1);
     } catch (error) {
-      setSaveError(readableError(error));
+      setSaveError(describeError(error));
     } finally {
       setSavingRoot(false);
     }
@@ -507,23 +534,18 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
             ),
           )
         : React.createElement(
-            'ul',
-            { className: 'dshwb-list' },
-            entries.map((entry) =>
-              React.createElement(
-                'li',
-                { key: entry.id },
-                React.createElement(
-                  'button',
-                  {
-                    type: 'button',
-                    className: 'dshwb-item',
-                    title: entry.name,
-                    onClick: () => void openWorkbench(entry.id),
-                  },
+            React.Fragment,
+            null,
+            React.createElement(
+              'ul',
+              { className: 'dshwb-list' },
+              entries.map((entry) => {
+                const openable = isOpenable(entry);
+                /** Shared row body; a flagged entry reads as a static card. */
+                const rowBody = [
                   React.createElement(
                     'span',
-                    { className: 'dshwb-item-main' },
+                    { key: 'main', className: 'dshwb-item-main' },
                     React.createElement(
                       'span',
                       { className: 'dshwb-item-headline' },
@@ -545,11 +567,93 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
                   // Missing/corrupt entries have no readable name, so the Host
                   // reports the id as the name: never show the id twice.
                   entry.name !== entry.id &&
-                    React.createElement('span', { className: 'dshwb-item-id' }, entry.id),
-                  React.createElement('span', { className: 'dshwb-item-chevron', 'aria-hidden': true }, '›'),
-                ),
-              ),
+                    React.createElement(
+                      'span',
+                      { key: 'id', className: 'dshwb-item-id' },
+                      entry.id,
+                    ),
+                  openable &&
+                    React.createElement(
+                      'span',
+                      { key: 'chevron', className: 'dshwb-item-chevron', 'aria-hidden': true },
+                      '›',
+                    ),
+                ];
+                return React.createElement(
+                  'li',
+                  { key: entry.id, className: 'dshwb-row' },
+                  openable
+                    ? React.createElement(
+                        'button',
+                        {
+                          type: 'button',
+                          className: 'dshwb-item',
+                          title: entry.name,
+                          onClick: () => void openWorkbench(entry.id),
+                        },
+                        rowBody,
+                      )
+                    : React.createElement('div', { className: 'dshwb-item dshwb-item-static' }, rowBody),
+                  !openable &&
+                    React.createElement(
+                      'div',
+                      { className: 'dshwb-row-actions' },
+                      confirmingCleanupId === entry.id
+                        ? React.createElement(
+                            React.Fragment,
+                            null,
+                            React.createElement(
+                              'span',
+                              { className: 'dshwb-row-confirm' },
+                              entry.status === 'missing'
+                                ? tr(
+                                    'list.cleanup.missing',
+                                    '清理这条登记？工作台目录已不存在，只会移除索引里的登记。',
+                                  )
+                                : tr(
+                                    'list.cleanup.corrupt',
+                                    '清理这条登记？会删除损坏的工作台目录与索引登记，无法撤销。',
+                                  ),
+                            ),
+                            React.createElement(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'dshwb-link dshwb-link-danger',
+                                disabled: cleaningUp,
+                                onClick: () => void cleanupEntry(entry.id),
+                              },
+                              cleaningUp ? tr('list.cleanup.working', '清理中…') : tr('list.cleanup.confirm', '确认清理'),
+                            ),
+                            React.createElement(
+                              'button',
+                              {
+                                type: 'button',
+                                className: 'dshwb-link',
+                                disabled: cleaningUp,
+                                onClick: () => setConfirmingCleanupId(null),
+                              },
+                              tr('list.cleanup.cancel', '取消'),
+                            ),
+                          )
+                        : React.createElement(
+                            'button',
+                            {
+                              type: 'button',
+                              className: 'dshwb-link dshwb-link-danger',
+                              onClick: () => {
+                                setCleanupError(null);
+                                setConfirmingCleanupId(entry.id);
+                              },
+                            },
+                            tr('list.cleanup', '清理登记'),
+                          ),
+                    ),
+                );
+              }),
             ),
+            cleanupError !== null &&
+              React.createElement('p', { className: 'dshwb-error', role: 'alert' }, cleanupError),
           ),
     );
 

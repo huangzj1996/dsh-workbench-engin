@@ -47,3 +47,13 @@ export class WorkbenchStoreError extends Error {
     this.code = code;
   }
 }
+
+/**
+ * Readable one-line message for any thrown value.
+ *
+ * Every layer (data layer, Host RPC, Client panel) reports failures by showing
+ * this text verbatim, so the conversion lives here instead of once per layer.
+ */
+export function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

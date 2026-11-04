@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { contextCardMarkdown } from '../../shared/workbench/context-card';
+import { describeError } from '../../shared/workbench/errors';
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import type {
   RootConfig,
@@ -121,11 +122,6 @@ async function atomicWrite(fs: FsLike, file: string, data: string): Promise<void
   }
 }
 
-/** Reason text for a filesystem failure, kept short and readable. */
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /** True for a missing path (the only fs failure callers treat as "absent"). */
 function isNotFound(error: unknown): boolean {
   return (
@@ -154,13 +150,13 @@ async function readIndex(fs: FsLike, root: string): Promise<{ data: IndexData; c
     if (isNotFound(error)) {
       return { data: { version: INDEX_VERSION, workbenches: [] }, created: true };
     }
-    throw new WorkbenchStoreError('file-corrupt', `索引文件无法读取：${describe(error)}`);
+    throw new WorkbenchStoreError('file-corrupt', `索引文件无法读取：${describeError(error)}`);
   }
   let raw: unknown;
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    throw new WorkbenchStoreError('file-corrupt', `索引文件不是合法 JSON：${describe(error)}`);
+    throw new WorkbenchStoreError('file-corrupt', `索引文件不是合法 JSON：${describeError(error)}`);
   }
   const workbenches =
     typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>)['workbenches'] : undefined;
@@ -191,7 +187,7 @@ async function writeIndex(fs: FsLike, root: string, data: IndexData): Promise<vo
   try {
     await atomicWrite(fs, path.join(root, INDEX_FILE), `${JSON.stringify(next, null, 2)}\n`);
   } catch (error) {
-    throw new WorkbenchStoreError('write-failed', describe(error));
+    throw new WorkbenchStoreError('write-failed', describeError(error));
   }
 }
 
@@ -201,7 +197,7 @@ async function scanWorkbenchIds(fs: FsLike, root: string): Promise<string[]> {
   try {
     entries = await fs.readdir(root);
   } catch (error) {
-    throw new WorkbenchStoreError('root-unreachable', `无法读取根目录：${root}（${describe(error)}）`);
+    throw new WorkbenchStoreError('root-unreachable', `无法读取根目录：${root}（${describeError(error)}）`);
   }
   const ids: string[] = [];
   for (const entry of entries) {
@@ -216,12 +212,45 @@ async function scanWorkbenchIds(fs: FsLike, root: string): Promise<string[]> {
   return ids.sort();
 }
 
-/** Read and validate one workbench JSON; `null` means corrupt (for the list flag). */
-async function readWorkbenchOrNull(fs: FsLike, file: string): Promise<Workbench | null> {
+/**
+ * Read and validate one workbench JSON for the list; `null` means corrupt.
+ *
+ * A JSON whose `id` disagrees with its folder is corrupt too: adopting it would
+ * make `read`/`save` address a different workbench than the folder the user
+ * opened, so the mismatch is flagged instead of silently trusted.
+ */
+async function readWorkbenchOrNull(
+  fs: FsLike,
+  file: string,
+  expectedId: string,
+): Promise<Workbench | null> {
   try {
-    return parseWorkbench(await fs.readFile(file, 'utf8'));
+    const workbench = parseWorkbench(await fs.readFile(file, 'utf8'));
+    return workbench.id === expectedId ? workbench : null;
   } catch {
     return null;
+  }
+}
+
+/** Error for a JSON whose id disagrees with its folder name. */
+function idMismatchError(dirId: string, jsonId: string): WorkbenchStoreError {
+  return new WorkbenchStoreError(
+    'file-corrupt',
+    `目录名与配置 id 不一致：${dirId}/${dirId}.json 里的 id 是 ${jsonId}`,
+  );
+}
+
+/**
+ * Repair the context card of a workbench the panel merely found on disk.
+ *
+ * List and read must stay usable on a read-only root, so a failed repair is
+ * swallowed here; `save` still reports a failed card write as a failed save.
+ */
+async function backfillContextCard(fs: FsLike, root: string, workbench: Workbench): Promise<void> {
+  try {
+    await ensureContextCard(fs, root, workbench);
+  } catch {
+    // The next writable save repairs it; listing/reading must not depend on it.
   }
 }
 
@@ -239,13 +268,14 @@ async function ensureContextCard(fs: FsLike, root: string, workbench: Workbench)
     return;
   } catch (error) {
     if (!isNotFound(error)) {
-      throw new WorkbenchStoreError('file-corrupt', `无法读取定位卡：${describe(error)}`);
+      throw new WorkbenchStoreError('file-corrupt', `无法读取定位卡：${describeError(error)}`);
     }
   }
   try {
-    await fs.writeFile(file, contextCardMarkdown(workbench), 'utf8');
+    // Same temp-file + rename path as the JSON: a card is never left half-written.
+    await atomicWrite(fs, file, contextCardMarkdown(workbench));
   } catch (error) {
-    throw new WorkbenchStoreError('write-failed', describe(error));
+    throw new WorkbenchStoreError('write-failed', describeError(error));
   }
 }
 
@@ -255,6 +285,11 @@ function assertWorkbenchId(value: unknown): string {
     throw new WorkbenchStoreError('id-invalid', typeof value === 'string' ? value : '');
   }
   return value;
+}
+
+/** Tombstone key: one root + one workbench id. */
+function deletionKey(root: string, id: string): string {
+  return `${root}\u0000${id}`;
 }
 
 /** The payload of `setRoot` may be `{ root }`; reject anything else readably. */
@@ -273,7 +308,7 @@ async function assertWritable(fs: FsLike, root: string): Promise<void> {
   try {
     await fs.writeFile(probe, '', 'utf8');
   } catch (error) {
-    throw new WorkbenchStoreError('root-unreachable', describe(error));
+    throw new WorkbenchStoreError('root-unreachable', describeError(error));
   } finally {
     await fs.rm(probe, { force: true }).catch(() => undefined);
   }
@@ -304,6 +339,16 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     return ids;
   }
 
+  /**
+   * Workbenches whose delete is in flight.
+   *
+   * A save that arrives between "the user confirmed delete" and "the folder is
+   * gone" would rewrite the JSON the delete is about to remove, so it is
+   * rejected while the tombstone is set. The tombstone is cleared when the
+   * delete settles, in a `finally`, so a failed delete never blocks the id.
+   */
+  const deleting = new Set<string>();
+
   async function getRootConfig(): Promise<RootConfig> {
     let text: string;
     try {
@@ -327,13 +372,13 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       const stats = await fs.stat(root);
       if (!stats.isDirectory()) throw new Error('不是文件夹');
     } catch (error) {
-      throw new WorkbenchStoreError('root-unreachable', `路径不存在或不是文件夹：${root}（${describe(error)}）`);
+      throw new WorkbenchStoreError('root-unreachable', `路径不存在或不是文件夹：${root}（${describeError(error)}）`);
     }
     await assertWritable(fs, root);
     try {
       await atomicWrite(fs, configFile, `${JSON.stringify({ root }, null, 2)}\n`);
     } catch (error) {
-      throw new WorkbenchStoreError('write-failed', describe(error));
+      throw new WorkbenchStoreError('write-failed', describeError(error));
     }
     return { root };
   }
@@ -367,11 +412,16 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
         entries.push({ id: entry.id, name: entry.id, status: 'missing', order: entry.order });
         continue;
       }
-      const workbench = await readWorkbenchOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
+      const workbench = await readWorkbenchOrNull(
+        fs,
+        path.join(root, entry.id, `${entry.id}.json`),
+        entry.id,
+      );
       if (workbench === null) {
         entries.push({ id: entry.id, name: entry.id, status: 'corrupt', order: entry.order });
         continue;
       }
+      await backfillContextCard(fs, root, workbench);
       entries.push({
         id: entry.id,
         name: workbench.name,
@@ -392,7 +442,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       text = await fs.readFile(file, 'utf8');
     } catch (error) {
       if (isNotFound(error)) throw new WorkbenchStoreError('not-found', `工作台 ${id}`);
-      throw new WorkbenchStoreError('file-corrupt', `无法读取 ${id}/${id}.json：${describe(error)}`);
+      throw new WorkbenchStoreError('file-corrupt', `无法读取 ${id}/${id}.json：${describeError(error)}`);
     }
     if (Buffer.byteLength(text, 'utf8') > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError('too-large', `${id}/${id}.json`);
@@ -402,8 +452,10 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       workbench = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
-      throw new WorkbenchStoreError('file-corrupt', describe(error));
+      throw new WorkbenchStoreError('file-corrupt', describeError(error));
     }
+    if (workbench.id !== id) throw idMismatchError(id, workbench.id);
+    await backfillContextCard(fs, root, workbench);
     // The user has now seen this workbench: it stops being "new on disk".
     adoptedByRoot.get(root)?.delete(id);
     return { workbench };
@@ -416,6 +468,9 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
         ? (payload as Record<string, unknown>)['id']
         : undefined;
     const id = assertWorkbenchId(rawId);
+    if (deleting.has(deletionKey(root, id))) {
+      throw new WorkbenchStoreError('write-failed', `工作台 ${id} 正在删除，已拒绝这次保存`);
+    }
     const workbench = validateWorkbench(payload);
     const text = serializeWorkbench(workbench);
     if (Buffer.byteLength(text, 'utf8') > MAX_FILE_BYTES) {
@@ -425,7 +480,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     try {
       await atomicWrite(fs, path.join(root, id, `${id}.json`), text);
     } catch (error) {
-      throw new WorkbenchStoreError('write-failed', describe(error));
+      throw new WorkbenchStoreError('write-failed', describeError(error));
     }
     await ensureContextCard(fs, root, workbench);
     const { data: index } = await readIndex(fs, root);
@@ -440,30 +495,36 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
   async function deleteWorkbench(rootInput: string, idInput: unknown): Promise<{ id: string }> {
     const id = assertWorkbenchId(idInput);
     const root = path.resolve(rootInput);
-    await assertRoot(fs, root);
-    const dir = path.join(root, id);
-    let exists = false;
+    const tombstone = deletionKey(root, id);
+    deleting.add(tombstone);
     try {
-      exists = (await fs.stat(dir)).isDirectory();
-    } catch {
-      exists = false;
-    }
-    const { data: index } = await readIndex(fs, root);
-    const hadEntry = index.workbenches.some((entry) => entry.id === id);
-    if (!exists && !hadEntry) throw new WorkbenchStoreError('not-found', `工作台 ${id}`);
-    if (exists) {
+      await assertRoot(fs, root);
+      const dir = path.join(root, id);
+      let exists = false;
       try {
-        await fs.rm(dir, { recursive: true, force: true });
-      } catch (error) {
-        throw new WorkbenchStoreError('write-failed', describe(error));
+        exists = (await fs.stat(dir)).isDirectory();
+      } catch {
+        exists = false;
       }
+      const { data: index } = await readIndex(fs, root);
+      const hadEntry = index.workbenches.some((entry) => entry.id === id);
+      if (!exists && !hadEntry) throw new WorkbenchStoreError('not-found', `工作台 ${id}`);
+      if (exists) {
+        try {
+          await fs.rm(dir, { recursive: true, force: true });
+        } catch (error) {
+          throw new WorkbenchStoreError('write-failed', describeError(error));
+        }
+      }
+      if (hadEntry) {
+        index.workbenches = index.workbenches.filter((entry) => entry.id !== id);
+        await writeIndex(fs, root, index);
+      }
+      adoptedByRoot.get(root)?.delete(id);
+      return { id };
+    } finally {
+      deleting.delete(tombstone);
     }
-    if (hadEntry) {
-      index.workbenches = index.workbenches.filter((entry) => entry.id !== id);
-      await writeIndex(fs, root, index);
-    }
-    adoptedByRoot.get(root)?.delete(id);
-    return { id };
   }
 
   return { getRootConfig, setRoot, list, read, save, delete: deleteWorkbench };

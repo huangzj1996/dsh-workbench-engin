@@ -4,6 +4,7 @@
  * Shared by both halves so the request/reply shape, the method names and the
  * error codes cannot drift; nothing here touches the filesystem or the DOM.
  */
+import type { WorkbenchErrorCode } from './errors';
 import type { Workbench } from './schema';
 
 /** The seven methods the Host route accepts. */
@@ -51,7 +52,7 @@ export interface WorkbenchList {
 /** One RPC reply: a value on success, a stable code + Chinese message on failure. */
 export type WorkbenchRpcResult =
   | { ok: true; value: unknown }
-  | { ok: false; error: { code: string; message: string } };
+  | { ok: false; error: { code: WorkbenchErrorCode; message: string } };
 
 /** Method-specific value shapes, for the Client helper's return types. */
 export interface WorkbenchRpcValues {
