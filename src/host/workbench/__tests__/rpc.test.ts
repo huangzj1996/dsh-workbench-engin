@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -13,6 +13,42 @@ async function tempDir(prefix: string): Promise<string> {
 }
 
 describe('workbench RPC', () => {
+  it('reports a workbench dropped on disk as adopted until it is opened, then deletes it cleanly', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const rpc = createWorkbenchRpc({ dshHome });
+    await rpc.dispatch({ method: 'setRoot', payload: { root } });
+
+    // An AI (or a human) writes a whole workbench folder outside the panel.
+    const dir = path.join(root, 'from-disk');
+    await mkdir(dir, { recursive: true });
+    await writeFile(
+      path.join(dir, 'from-disk.json'),
+      JSON.stringify({ id: 'from-disk', name: '外部新建的', panels: [] }),
+      'utf8',
+    );
+
+    const first = await rpc.dispatch({ method: 'list' });
+    expect(first).toMatchObject({ ok: true, value: { entries: [{ id: 'from-disk', status: 'adopted' }] } });
+    const second = await rpc.dispatch({ method: 'list' });
+    expect(second).toMatchObject({ ok: true, value: { entries: [{ id: 'from-disk', status: 'adopted' }] } });
+
+    await rpc.dispatch({ method: 'read', payload: { id: 'from-disk' } });
+    await expect(rpc.dispatch({ method: 'list' })).resolves.toMatchObject({
+      ok: true,
+      value: { entries: [{ id: 'from-disk', status: 'ok' }] },
+    });
+
+    await rpc.dispatch({ method: 'delete', payload: { id: 'from-disk' } });
+    await expect(rpc.dispatch({ method: 'list' })).resolves.toEqual({
+      ok: true,
+      value: { root, entries: [] },
+    });
+    await expect(readFile(path.join(root, 'from-disk', 'from-disk.json'), 'utf8')).rejects.toThrow();
+    const index = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
+    expect(index.workbenches).toEqual([]);
+  });
+
   it('reports root-unset while no root has been chosen', async () => {
     const rpc = createWorkbenchRpc({ dshHome: await tempDir('dsh-home') });
 

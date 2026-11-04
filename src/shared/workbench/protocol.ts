@@ -24,8 +24,12 @@ export interface RootConfig {
 export interface WorkbenchListEntry {
   id: string;
   name: string;
-  /** `external` = newly adopted from disk, `missing`/`corrupt` = flagged, never deleted. */
-  status: 'ok' | 'external' | 'missing' | 'corrupt';
+  /**
+   * `ok` = registered and readable, `adopted` = found on disk by reconciliation
+   * and not opened yet (the flag survives refreshes until `read` succeeds),
+   * `missing`/`corrupt` = flagged in the index, never deleted automatically.
+   */
+  status: 'ok' | 'adopted' | 'missing' | 'corrupt';
   order: number;
 }
 

@@ -1412,6 +1412,30 @@ function PanelFrame(props) {
   );
 }
 
+// src/client/workbench-status.ts
+var WORKBENCH_STATUS_LABEL_KEYS = {
+  adopted: "list.status.adopted",
+  missing: "list.status.missing",
+  corrupt: "list.status.corrupt"
+};
+var WORKBENCH_STATUS_HINT_KEYS = {
+  adopted: "list.status.adopted.hint",
+  missing: "list.status.missing.hint",
+  corrupt: "list.status.corrupt.hint"
+};
+function isOpenable(entry) {
+  return entry.status === "ok" || entry.status === "adopted";
+}
+function workbenchStatusLabel(tr, status) {
+  if (status === "ok") return "";
+  return tr(WORKBENCH_STATUS_LABEL_KEYS[status], status);
+}
+function workbenchOptionLabel(tr, entry) {
+  const name2 = entry.name.trim() === "" ? entry.id : entry.name;
+  const label = workbenchStatusLabel(tr, entry.status);
+  return label === "" ? name2 : `${name2} · ${label}`;
+}
+
 // src/client/scene-editor.ts
 var AUTOSAVE_DELAY_MS = 300;
 var SCENE_CSS = `
@@ -1420,6 +1444,9 @@ var SCENE_CSS = `
 .dshwb-scene-body>.dshwb-grid-wrap{flex:1;min-width:0}
 .dshwb-save-status{flex:0 0 auto;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap}
 .dshwb-save-error{flex:0 1 auto;max-width:300px;min-width:0;overflow:hidden;color:#ffb4a8;font-size:11.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-switch{flex:0 0 auto;width:auto;max-width:240px;padding:6px 8px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:12.5px;line-height:1.4;color-scheme:dark;cursor:pointer}
+.dshwb-switch:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
+.dshwb-confirm-text{flex:0 1 auto;max-width:260px;color:#ffb4a8;font-size:11.5px;line-height:1.5}
 `;
 function readableError(error) {
   if (error instanceof WorkbenchRpcError) return error.message;
@@ -1432,6 +1459,9 @@ function SceneEditor(props) {
   const [saveError, setSaveError] = React8.useState(null);
   const [saving, setSaving] = React8.useState(false);
   const [drawerOpen, setDrawerOpen] = React8.useState(props.defaultDrawerOpen === true);
+  const [confirmingDelete, setConfirmingDelete] = React8.useState(false);
+  const [deleting, setDeleting] = React8.useState(false);
+  const [actionError, setActionError] = React8.useState(null);
   const [selectedPanelId, setSelectedPanelId] = React8.useState(
     props.scene.panels[0]?.id ?? null
   );
@@ -1442,6 +1472,7 @@ function SceneEditor(props) {
   const retrySceneRef = React8.useRef(null);
   const timerRef = React8.useRef(null);
   const seqRef = React8.useRef(0);
+  const deletingRef = React8.useRef(false);
   const clearTimer = React8.useCallback(() => {
     if (timerRef.current !== null) {
       window.clearTimeout(timerRef.current);
@@ -1490,6 +1521,7 @@ function SceneEditor(props) {
   React8.useEffect(
     () => () => {
       clearTimer();
+      if (deletingRef.current) return;
       const pending = sceneRef.current;
       if (pending !== lastSavedRef.current) {
         void client.save(pending).catch(() => void 0);
@@ -1497,6 +1529,18 @@ function SceneEditor(props) {
     },
     [clearTimer, client]
   );
+  const propSceneRef = React8.useRef(props.scene);
+  React8.useEffect(() => {
+    const next = props.scene;
+    if (next === propSceneRef.current) return;
+    propSceneRef.current = next;
+    sceneRef.current = next;
+    lastSavedRef.current = next;
+    retrySceneRef.current = null;
+    setScene(next);
+    setLastSaved(next);
+    setSaveError(null);
+  }, [props.scene]);
   React8.useEffect(() => {
     if (selectedPanelId !== null && scene.panels.some((panel) => panel.id === selectedPanelId)) {
       return;
@@ -1512,6 +1556,38 @@ function SceneEditor(props) {
     void flush().then((saved) => {
       if (saved) props.onReload();
     });
+  };
+  const switchTo = (id) => {
+    if (id === sceneRef.current.id) return;
+    setActionError(null);
+    void flush().then((saved) => {
+      if (saved) props.onSwitch(id);
+    });
+  };
+  const setDrawer = (open) => {
+    setDrawerOpen(open);
+    props.onDrawerChange?.(open);
+  };
+  const deleteWorkbench = async () => {
+    if (deletingRef.current) return;
+    const id = sceneRef.current.id;
+    setDeleting(true);
+    setActionError(null);
+    setSaveError(null);
+    retrySceneRef.current = null;
+    deletingRef.current = true;
+    clearTimer();
+    try {
+      await client.delete(id);
+      sceneRef.current = lastSavedRef.current;
+      setConfirmingDelete(false);
+      await props.onDeleted(id);
+    } catch (error) {
+      deletingRef.current = false;
+      setActionError(readableError(error));
+    } finally {
+      setDeleting(false);
+    }
   };
   const retrySave = () => {
     const target = retrySceneRef.current;
@@ -1556,6 +1632,24 @@ function SceneEditor(props) {
         `← ${tr("scene.back", "返回列表")}`
       ),
       React8.createElement(
+        "select",
+        {
+          className: "dshwb-switch",
+          "aria-label": tr("bar.switch", "切换工作台"),
+          title: tr("bar.switch", "切换工作台"),
+          value: scene.id,
+          disabled: deleting,
+          onChange: (event) => switchTo(event.target.value)
+        },
+        props.entries.map(
+          (entry) => React8.createElement(
+            "option",
+            { key: entry.id, value: entry.id },
+            workbenchOptionLabel(tr, entry)
+          )
+        )
+      ),
+      React8.createElement(
         "div",
         { className: "dshwb-scene-heading" },
         React8.createElement(
@@ -1581,10 +1675,55 @@ function SceneEditor(props) {
         tr("save.retry", "重试")
       ),
       saveError === null && React8.createElement("span", { className: "dshwb-save-status" }, status),
+      actionError !== null && React8.createElement(
+        "span",
+        { className: "dshwb-save-error", role: "alert", title: actionError },
+        actionError
+      ),
       React8.createElement(
         "button",
         { type: "button", className: "dshwb-link", onClick: handleReload },
         tr("scene.refresh", "刷新")
+      ),
+      confirmingDelete ? React8.createElement(
+        React8.Fragment,
+        null,
+        React8.createElement(
+          "span",
+          { className: "dshwb-confirm-text" },
+          tr("bar.deleteConfirm", "删除这个工作台？目录与索引登记都会移除，无法撤销。")
+        ),
+        React8.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-link dshwb-link-danger",
+            disabled: deleting,
+            onClick: () => void deleteWorkbench()
+          },
+          deleting ? tr("bar.deleting", "删除中…") : tr("bar.confirmDelete", "确认删除")
+        ),
+        React8.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-link",
+            disabled: deleting,
+            onClick: () => setConfirmingDelete(false)
+          },
+          tr("bar.cancelDelete", "取消")
+        )
+      ) : React8.createElement(
+        "button",
+        {
+          type: "button",
+          className: "dshwb-link dshwb-link-danger",
+          onClick: () => {
+            setActionError(null);
+            setConfirmingDelete(true);
+          }
+        },
+        tr("bar.delete", "删除工作台")
       ),
       React8.createElement(
         "button",
@@ -1596,7 +1735,7 @@ function SceneEditor(props) {
         {
           type: "button",
           className: "dshwb-secondary",
-          onClick: () => setDrawerOpen((open) => !open)
+          onClick: () => setDrawer(!drawerOpen)
         },
         drawerOpen ? tr("drawer.hide", "收起配置") : tr("drawer.show", "配置")
       )
@@ -1610,7 +1749,7 @@ function SceneEditor(props) {
         scene,
         selectedPanelId,
         tr,
-        onClose: () => setDrawerOpen(false),
+        onClose: () => setDrawer(false),
         onWorkbenchChange,
         onSelectPanel: setSelectedPanelId,
         onAddPanel,
@@ -1621,6 +1760,49 @@ function SceneEditor(props) {
       })
     )
   );
+}
+
+// src/client/workbench-session.ts
+var LAST_WORKBENCH_KEY = "dsh-hello-word:last-workbench";
+function browserStorage() {
+  try {
+    return typeof localStorage === "undefined" ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+function readLastWorkbench(store) {
+  if (store === null) return null;
+  try {
+    const raw = store.getItem(LAST_WORKBENCH_KEY);
+    if (typeof raw !== "string") return null;
+    const id = raw.trim();
+    return id === "" ? null : id;
+  } catch {
+    return null;
+  }
+}
+function writeLastWorkbench(store, id) {
+  if (store === null || id === "") return;
+  try {
+    store.setItem(LAST_WORKBENCH_KEY, id);
+  } catch {
+  }
+}
+function clearLastWorkbench(store) {
+  if (store === null) return;
+  try {
+    store.removeItem(LAST_WORKBENCH_KEY);
+  } catch {
+  }
+}
+function pickWorkbenchAfterDelete(before, after, deletedId) {
+  const openable = after.filter(isOpenable);
+  if (openable.length === 0) return null;
+  const deletedIndex = before.findIndex((entry) => entry.id === deletedId);
+  if (deletedIndex === -1) return openable[0].id;
+  const preceding = before.slice(0, deletedIndex).filter(isOpenable).length;
+  return (openable[preceding] ?? openable[openable.length - 1]).id;
 }
 
 // src/client/workbench.ts
@@ -1667,10 +1849,15 @@ var PANEL_CSS = `
 .dshwb-scene-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
 .dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.dshwb-item-headline{display:flex;align-items:center;gap:8px;min-width:0}
+.dshwb-item-hint{color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.5;text-align:left}
 .dshwb-badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:1.6;white-space:nowrap}
-.dshwb-badge-external{background:rgba(86,160,255,.18);color:#a9ceff}
+.dshwb-badge-adopted{background:rgba(86,160,255,.18);color:#a9ceff}
 .dshwb-badge-missing{background:rgba(255,196,84,.16);color:#ffd88e}
 .dshwb-badge-corrupt{background:rgba(255,112,96,.18);color:#ffb4a8}
+.dshwb-link-danger{color:#ffb4a8}
+.dshwb-link-danger:hover{color:#ffd2c9}
 .dshwb-loading{margin:0;color:rgba(226,234,248,.62);font-size:12.5px}
 .dshwb-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(4,9,18,.6);backdrop-filter:blur(3px)}
 .dshwb-dialog{box-sizing:border-box;width:100%;max-width:420px;padding:18px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.94);box-shadow:0 24px 60px rgba(0,0,0,.45);color:#eef3fb}
@@ -1681,11 +1868,10 @@ var PANEL_CSS = `
 .dshwb-idrow{display:flex;align-items:center;gap:8px}
 .dshwb-idvalue{flex:1;min-width:0;overflow:hidden;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:9px;background:rgba(255,255,255,.04);color:rgba(226,234,248,.8);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:nowrap;text-overflow:ellipsis}
 `;
-var STATUS_KEYS = {
-  external: "list.status.external",
-  missing: "list.status.missing",
-  corrupt: "list.status.corrupt"
-};
+function readableError2(error) {
+  if (error instanceof WorkbenchRpcError) return error.message;
+  return error instanceof Error ? error.message : String(error);
+}
 function HelloPanel(props) {
   const translate = props.t;
   const tr = React9.useCallback(
@@ -1705,6 +1891,11 @@ function HelloPanel(props) {
   const [saveError, setSaveError] = React9.useState(null);
   const [view, setView] = React9.useState({ kind: "list" });
   const [creating, setCreating] = React9.useState(false);
+  const [drawerOpen, setDrawerOpen] = React9.useState(false);
+  const storage = React9.useMemo(() => browserStorage(), []);
+  const viewRef = React9.useRef(view);
+  viewRef.current = view;
+  const restoredRef = React9.useRef(false);
   const takenIds = React9.useMemo(
     () => state.phase === "ready" ? state.entries.map((entry) => entry.id) : [],
     [state]
@@ -1719,6 +1910,8 @@ function HelloPanel(props) {
     const list = await rpc.list();
     setState({ phase: "ready", root: list.root, entries: list.entries });
     setCreating(false);
+    writeLastWorkbench(storage, saved.id);
+    setDrawerOpen(true);
     setView({ kind: "scene", scene: saved, configure: true });
   };
   const load = React9.useCallback(async () => {
@@ -1737,10 +1930,7 @@ function HelloPanel(props) {
       const list = await rpc.list();
       setState({ phase: "ready", root: list.root, entries: list.entries });
     } catch (error) {
-      setState({
-        phase: "error",
-        message: error instanceof Error ? error.message : String(error)
-      });
+      setState({ phase: "error", message: readableError2(error) });
     }
   }, [rpc, tr]);
   React9.useEffect(() => {
@@ -1752,12 +1942,67 @@ function HelloPanel(props) {
     try {
       const { scene } = await rpc.read(id);
       setView({ kind: "scene", scene });
+      writeLastWorkbench(storage, id);
+      setState(
+        (current) => current.phase === "ready" ? {
+          phase: "ready",
+          root: current.root,
+          entries: current.entries.map(
+            (entry) => entry.id === id && entry.status === "adopted" ? { ...entry, status: "ok" } : entry
+          )
+        } : current
+      );
     } catch (error) {
-      setView({
-        kind: "open-error",
-        id,
-        message: error instanceof Error ? error.message : String(error)
-      });
+      setView({ kind: "open-error", id, message: readableError2(error) });
+    }
+  };
+  const refresh = async () => {
+    if (rpc === void 0) return;
+    try {
+      const config = await rpc.getRootConfig();
+      if (config.root === null) {
+        setView({ kind: "list" });
+        setState({ phase: "no-root" });
+        return;
+      }
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+      const current = viewRef.current;
+      if (current.kind !== "scene") return;
+      try {
+        const { scene } = await rpc.read(current.scene.id);
+        setView({ kind: "scene", scene });
+      } catch (error) {
+        setView({ kind: "open-error", id: current.scene.id, message: readableError2(error) });
+      }
+    } catch (error) {
+      setState({ phase: "error", message: readableError2(error) });
+    }
+  };
+  React9.useEffect(() => {
+    if (restoredRef.current || state.phase !== "ready") return;
+    restoredRef.current = true;
+    const last = readLastWorkbench(storage);
+    if (last === null) return;
+    const entry = state.entries.find((candidate) => candidate.id === last);
+    if (entry === void 0 || !isOpenable(entry)) return;
+    void openWorkbench(last);
+  }, [state, storage, openWorkbench]);
+  const handleDeleted = async (id) => {
+    if (rpc === void 0) return;
+    const before = state.phase === "ready" ? state.entries : [];
+    if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+    try {
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+      const next = pickWorkbenchAfterDelete(before, list.entries, id);
+      if (next === null) {
+        setView({ kind: "list" });
+        return;
+      }
+      await openWorkbench(next);
+    } catch (error) {
+      setState({ phase: "error", message: readableError2(error) });
     }
   };
   const startEditing = (prefill) => {
@@ -1907,13 +2152,28 @@ function HelloPanel(props) {
               title: entry.name,
               onClick: () => void openWorkbench(entry.id)
             },
-            React9.createElement("span", { className: "dshwb-item-name" }, entry.name),
-            React9.createElement("span", { className: "dshwb-item-id" }, entry.id),
-            entry.status !== "ok" && React9.createElement(
+            React9.createElement(
               "span",
-              { className: `dshwb-badge dshwb-badge-${entry.status}` },
-              tr(STATUS_KEYS[entry.status], entry.status)
+              { className: "dshwb-item-main" },
+              React9.createElement(
+                "span",
+                { className: "dshwb-item-headline" },
+                React9.createElement("span", { className: "dshwb-item-name" }, entry.name),
+                entry.status !== "ok" && React9.createElement(
+                  "span",
+                  { className: `dshwb-badge dshwb-badge-${entry.status}` },
+                  tr(WORKBENCH_STATUS_LABEL_KEYS[entry.status], entry.status)
+                )
+              ),
+              entry.status !== "ok" && React9.createElement(
+                "span",
+                { className: "dshwb-item-hint" },
+                tr(WORKBENCH_STATUS_HINT_KEYS[entry.status], entry.status)
+              )
             ),
+            // Missing/corrupt entries have no readable name, so the Host
+            // reports the id as the name: never show the id twice.
+            entry.name !== entry.id && React9.createElement("span", { className: "dshwb-item-id" }, entry.id),
             React9.createElement("span", { className: "dshwb-item-chevron", "aria-hidden": true }, "›")
           )
         )
@@ -1943,9 +2203,13 @@ function HelloPanel(props) {
       scene,
       tr,
       client,
-      defaultDrawerOpen: view.kind === "scene" && view.configure === true,
+      entries: state.phase === "ready" ? state.entries : [],
+      defaultDrawerOpen: view.kind === "scene" && view.configure === true ? true : drawerOpen,
       onBack: () => void load(),
-      onReload: () => void openWorkbench(scene.id),
+      onReload: () => void refresh(),
+      onSwitch: (id) => void openWorkbench(id),
+      onDeleted: handleDeleted,
+      onDrawerChange: setDrawerOpen,
       onCreateWorkbench: openCreate
     });
   };
@@ -2267,9 +2531,18 @@ var zh = {
   "list.empty.sub": "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或点「新建工作台」创建。",
   "list.empty.action": "新建工作台",
   "bar.new": "新建工作台",
-  "list.status.external": "外部新建",
+  "bar.switch": "切换工作台",
+  "bar.delete": "删除工作台",
+  "bar.deleteConfirm": "删除这个工作台？目录与索引登记都会移除，无法撤销。",
+  "bar.confirmDelete": "确认删除",
+  "bar.cancelDelete": "取消",
+  "bar.deleting": "删除中…",
+  "list.status.adopted": "外部新建",
+  "list.status.adopted.hint": "从磁盘扫描到、还没打开过的工作台；打开一次后标记会消失。",
   "list.status.missing": "缺失",
+  "list.status.missing.hint": "索引里有登记，但工作台目录或 JSON 已不在；不会自动删除登记。",
   "list.status.corrupt": "损坏",
+  "list.status.corrupt.hint": "工作台 JSON 无法解析；修好文件后点「刷新」即可恢复。",
   "scene.back": "返回列表",
   "scene.refresh": "刷新",
   "scene.opening": "正在打开…",
@@ -2372,9 +2645,18 @@ var en = {
   "list.empty.sub": "This root has no workbench yet. Ask an AI to drop an <id>/<id>.json here, or click “New workbench”.",
   "list.empty.action": "New workbench",
   "bar.new": "New workbench",
-  "list.status.external": "New on disk",
+  "bar.switch": "Switch workbench",
+  "bar.delete": "Delete workbench",
+  "bar.deleteConfirm": "Delete this workbench? Its folder and index entry are removed; this cannot be undone.",
+  "bar.confirmDelete": "Delete",
+  "bar.cancelDelete": "Cancel",
+  "bar.deleting": "Deleting…",
+  "list.status.adopted": "New on disk",
+  "list.status.adopted.hint": "Found on disk but not opened yet; the flag clears once you open it.",
   "list.status.missing": "Missing",
+  "list.status.missing.hint": "Still in the index, but its folder or JSON is gone; the entry is never deleted automatically.",
   "list.status.corrupt": "Corrupt",
+  "list.status.corrupt.hint": "The workbench JSON cannot be parsed; fix the file and hit Refresh.",
   "scene.back": "Back to list",
   "scene.refresh": "Refresh",
   "scene.opening": "Opening…",

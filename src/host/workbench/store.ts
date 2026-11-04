@@ -284,6 +284,26 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
   const fs = options.fs ?? nodeFsAdapter;
   const configFile = path.join(options.dshHome, CONFIG_DIR, CONFIG_FILE);
 
+  /**
+   * Ids discovered by reconciliation and not opened yet, keyed by root.
+   *
+   * `list` reports them as `adopted` on every refresh — not just on the call
+   * that registered them — until a successful `read` shows the user has seen
+   * the workbench. The set lives with the store, so it covers the whole Host
+   * process lifetime for one root; a restart simply rediscovers the directory
+   * through the same reconciliation path.
+   */
+  const adoptedByRoot = new Map<string, Set<string>>();
+
+  function adoptedFor(root: string): Set<string> {
+    let ids = adoptedByRoot.get(root);
+    if (ids === undefined) {
+      ids = new Set<string>();
+      adoptedByRoot.set(root, ids);
+    }
+    return ids;
+  }
+
   async function getRootConfig(): Promise<RootConfig> {
     let text: string;
     try {
@@ -325,7 +345,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     const scanned = await scanWorkbenchIds(fs, root);
     const scannedSet = new Set(scanned);
     const registered = new Set(index.workbenches.map((entry) => entry.id));
-    const external = new Set<string>();
+    const adopted = adoptedFor(root);
     let nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0);
     let changed = created;
 
@@ -333,7 +353,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       if (registered.has(id)) continue;
       nextOrder += 1;
       index.workbenches.push({ id, order: nextOrder });
-      external.add(id);
+      adopted.add(id);
       changed = true;
     }
     if (changed) await writeIndex(fs, root, index);
@@ -355,7 +375,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       entries.push({
         id: entry.id,
         name: scene.name,
-        status: external.has(entry.id) ? 'external' : 'ok',
+        status: adopted.has(entry.id) ? 'adopted' : 'ok',
         order: entry.order,
       });
     }
@@ -377,12 +397,16 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
     if (Buffer.byteLength(text, 'utf8') > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError('too-large', `${id}/${id}.json`);
     }
+    let scene: WorkbenchScene;
     try {
-      return { scene: parseWorkbench(text) };
+      scene = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
       throw new WorkbenchStoreError('file-corrupt', describe(error));
     }
+    // The user has now seen this workbench: it stops being "new on disk".
+    adoptedByRoot.get(root)?.delete(id);
+    return { scene };
   }
 
   async function save(rootInput: string, payload: unknown): Promise<{ scene: WorkbenchScene }> {
@@ -438,6 +462,7 @@ export function createWorkbenchStore(options: WorkbenchStoreOptions): WorkbenchS
       index.workbenches = index.workbenches.filter((entry) => entry.id !== id);
       await writeIndex(fs, root, index);
     }
+    adoptedByRoot.get(root)?.delete(id);
     return { id };
   }
 

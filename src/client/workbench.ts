@@ -4,9 +4,14 @@
  * picks.
  *
  * Tickets #3–#5 scope: first-run root setup, the empty state, the list with its
- * three reconciliation flags, readable errors, the grid view of one workbench,
- * the create flow (auto id + context card saved by the Host) and the config
+ * reconciliation flags, readable errors, the grid view of one workbench, the
+ * create flow (auto id + context card saved by the Host) and the config
  * drawer/autosave owned by `scene-editor`.
+ *
+ * Ticket #6 adds the multi-workbench shell: restoring the last used workbench
+ * on mount, switching between them, deleting the open one with a confirmation,
+ * and the refresh action that re-reads the root, the list and the open scene so
+ * AI edits made on disk become visible.
  */
 import * as React from 'react';
 
@@ -15,6 +20,18 @@ import { HeroBackdrop, HERO_BASE } from './hero-backdrop';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
 import { SceneEditor } from './scene-editor';
 import { createWorkbenchScene } from './workbench-draft';
+import {
+  browserStorage,
+  clearLastWorkbench,
+  pickWorkbenchAfterDelete,
+  readLastWorkbench,
+  writeLastWorkbench,
+} from './workbench-session';
+import {
+  WORKBENCH_STATUS_HINT_KEYS,
+  WORKBENCH_STATUS_LABEL_KEYS,
+  isOpenable,
+} from './workbench-status';
 import type { WorkbenchListEntry } from '../shared/workbench/protocol';
 import type { WorkbenchScene } from '../shared/workbench/schema';
 
@@ -67,10 +84,15 @@ const PANEL_CSS = `
 .dshwb-scene-desc{margin:0;color:rgba(226,234,248,.62);font-size:12px;line-height:1.6}
 .dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-item-main{display:flex;flex:1;min-width:0;flex-direction:column;gap:2px}
+.dshwb-item-headline{display:flex;align-items:center;gap:8px;min-width:0}
+.dshwb-item-hint{color:rgba(226,234,248,.55);font-size:11.5px;line-height:1.5;text-align:left}
 .dshwb-badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:1.6;white-space:nowrap}
-.dshwb-badge-external{background:rgba(86,160,255,.18);color:#a9ceff}
+.dshwb-badge-adopted{background:rgba(86,160,255,.18);color:#a9ceff}
 .dshwb-badge-missing{background:rgba(255,196,84,.16);color:#ffd88e}
 .dshwb-badge-corrupt{background:rgba(255,112,96,.18);color:#ffb4a8}
+.dshwb-link-danger{color:#ffb4a8}
+.dshwb-link-danger:hover{color:#ffd2c9}
 .dshwb-loading{margin:0;color:rgba(226,234,248,.62);font-size:12.5px}
 .dshwb-overlay{position:absolute;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(4,9,18,.6);backdrop-filter:blur(3px)}
 .dshwb-dialog{box-sizing:border-box;width:100%;max-width:420px;padding:18px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.94);box-shadow:0 24px 60px rgba(0,0,0,.45);color:#eef3fb}
@@ -104,12 +126,11 @@ export interface HelloPanelProps {
   rpc?: WorkbenchClient;
 }
 
-/** Status-label key per reconciliation flag. */
-const STATUS_KEYS: Record<Exclude<WorkbenchListEntry['status'], 'ok'>, string> = {
-  external: 'list.status.external',
-  missing: 'list.status.missing',
-  corrupt: 'list.status.corrupt',
-};
+/** Readable message for any RPC/other failure. */
+function readableError(error: unknown): string {
+  if (error instanceof WorkbenchRpcError) return error.message;
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** The central panel: hero backdrop + first-run root setup + the workbench list. */
 export function HelloPanel(props: HelloPanelProps): React.ReactElement {
@@ -132,6 +153,15 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [view, setView] = React.useState<PanelView>({ kind: 'list' });
   const [creating, setCreating] = React.useState(false);
+  /** Drawer preference, carried across workbench switches (create opens it). */
+  const [drawerOpen, setDrawerOpen] = React.useState(false);
+
+  /** The panel's session memory (last used workbench); null when unavailable. */
+  const storage = React.useMemo(() => browserStorage(), []);
+  const viewRef = React.useRef(view);
+  viewRef.current = view;
+  /** The "restore last used workbench" attempt runs once per panel mount. */
+  const restoredRef = React.useRef(false);
 
   /** Ids already in the root, so a new workbench picks a colliding-free id. */
   const takenIds = React.useMemo(
@@ -151,6 +181,8 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     const list = await rpc.list();
     setState({ phase: 'ready', root: list.root, entries: list.entries });
     setCreating(false);
+    writeLastWorkbench(storage, saved.id);
+    setDrawerOpen(true);
     setView({ kind: 'scene', scene: saved, configure: true });
   };
 
@@ -170,10 +202,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       const list = await rpc.list();
       setState({ phase: 'ready', root: list.root, entries: list.entries });
     } catch (error) {
-      setState({
-        phase: 'error',
-        message: error instanceof Error ? error.message : String(error),
-      });
+      setState({ phase: 'error', message: readableError(error) });
     }
   }, [rpc, tr]);
 
@@ -188,12 +217,82 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
     try {
       const { scene } = await rpc.read(id);
       setView({ kind: 'scene', scene });
+      writeLastWorkbench(storage, id);
+      // The Host clears the "adopted" marker on a successful read; mirror that
+      // in the switcher without paying for another list round-trip.
+      setState((current) =>
+        current.phase === 'ready'
+          ? {
+              phase: 'ready',
+              root: current.root,
+              entries: current.entries.map((entry) =>
+                entry.id === id && entry.status === 'adopted'
+                  ? { ...entry, status: 'ok' as const }
+                  : entry,
+              ),
+            }
+          : current,
+      );
     } catch (error) {
-      setView({
-        kind: 'open-error',
-        id,
-        message: error instanceof Error ? error.message : String(error),
-      });
+      setView({ kind: 'open-error', id, message: readableError(error) });
+    }
+  };
+
+  /**
+   * Refresh action: re-read the root pointer, the list and — when one is open —
+   * the workbench itself, so edits an AI made on disk become visible.
+   */
+  const refresh = async (): Promise<void> => {
+    if (rpc === undefined) return;
+    try {
+      const config = await rpc.getRootConfig();
+      if (config.root === null) {
+        setView({ kind: 'list' });
+        setState({ phase: 'no-root' });
+        return;
+      }
+      const list = await rpc.list();
+      setState({ phase: 'ready', root: list.root, entries: list.entries });
+      const current = viewRef.current;
+      if (current.kind !== 'scene') return;
+      try {
+        const { scene } = await rpc.read(current.scene.id);
+        setView({ kind: 'scene', scene });
+      } catch (error) {
+        setView({ kind: 'open-error', id: current.scene.id, message: readableError(error) });
+      }
+    } catch (error) {
+      setState({ phase: 'error', message: readableError(error) });
+    }
+  };
+
+  // Opening the panel (e.g. from the sidebar entry) restores the last workbench.
+  React.useEffect(() => {
+    if (restoredRef.current || state.phase !== 'ready') return;
+    restoredRef.current = true;
+    const last = readLastWorkbench(storage);
+    if (last === null) return;
+    const entry = state.entries.find((candidate) => candidate.id === last);
+    if (entry === undefined || !isOpenable(entry)) return;
+    void openWorkbench(last);
+  }, [state, storage, openWorkbench]);
+
+  /** The editor deleted the open workbench: open the next one or show the list. */
+  const handleDeleted = async (id: string): Promise<void> => {
+    if (rpc === undefined) return;
+    const before = state.phase === 'ready' ? state.entries : [];
+    if (readLastWorkbench(storage) === id) clearLastWorkbench(storage);
+    try {
+      const list = await rpc.list();
+      setState({ phase: 'ready', root: list.root, entries: list.entries });
+      const next = pickWorkbenchAfterDelete(before, list.entries, id);
+      if (next === null) {
+        setView({ kind: 'list' });
+        return;
+      }
+      await openWorkbench(next);
+    } catch (error) {
+      setState({ phase: 'error', message: readableError(error) });
     }
   };
 
@@ -351,14 +450,31 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
                     title: entry.name,
                     onClick: () => void openWorkbench(entry.id),
                   },
-                  React.createElement('span', { className: 'dshwb-item-name' }, entry.name),
-                  React.createElement('span', { className: 'dshwb-item-id' }, entry.id),
-                  entry.status !== 'ok' &&
+                  React.createElement(
+                    'span',
+                    { className: 'dshwb-item-main' },
                     React.createElement(
                       'span',
-                      { className: `dshwb-badge dshwb-badge-${entry.status}` },
-                      tr(STATUS_KEYS[entry.status], entry.status),
+                      { className: 'dshwb-item-headline' },
+                      React.createElement('span', { className: 'dshwb-item-name' }, entry.name),
+                      entry.status !== 'ok' &&
+                        React.createElement(
+                          'span',
+                          { className: `dshwb-badge dshwb-badge-${entry.status}` },
+                          tr(WORKBENCH_STATUS_LABEL_KEYS[entry.status], entry.status),
+                        ),
                     ),
+                    entry.status !== 'ok' &&
+                      React.createElement(
+                        'span',
+                        { className: 'dshwb-item-hint' },
+                        tr(WORKBENCH_STATUS_HINT_KEYS[entry.status], entry.status),
+                      ),
+                  ),
+                  // Missing/corrupt entries have no readable name, so the Host
+                  // reports the id as the name: never show the id twice.
+                  entry.name !== entry.id &&
+                    React.createElement('span', { className: 'dshwb-item-id' }, entry.id),
                   React.createElement('span', { className: 'dshwb-item-chevron', 'aria-hidden': true }, '›'),
                 ),
               ),
@@ -390,9 +506,14 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       scene,
       tr,
       client,
-      defaultDrawerOpen: view.kind === 'scene' && view.configure === true,
+      entries: state.phase === 'ready' ? state.entries : [],
+      defaultDrawerOpen:
+        view.kind === 'scene' && view.configure === true ? true : drawerOpen,
       onBack: () => void load(),
-      onReload: () => void openWorkbench(scene.id),
+      onReload: () => void refresh(),
+      onSwitch: (id: string) => void openWorkbench(id),
+      onDeleted: handleDeleted,
+      onDrawerChange: setDrawerOpen,
       onCreateWorkbench: openCreate,
     });
   };

@@ -286,6 +286,15 @@ async function assertWritable(fs, root) {
 function createWorkbenchStore(options) {
   const fs = options.fs ?? nodeFsAdapter;
   const configFile = path.join(options.dshHome, CONFIG_DIR, CONFIG_FILE);
+  const adoptedByRoot = /* @__PURE__ */ new Map();
+  function adoptedFor(root) {
+    let ids = adoptedByRoot.get(root);
+    if (ids === void 0) {
+      ids = /* @__PURE__ */ new Set();
+      adoptedByRoot.set(root, ids);
+    }
+    return ids;
+  }
   async function getRootConfig() {
     let text;
     try {
@@ -325,14 +334,14 @@ function createWorkbenchStore(options) {
     const scanned = await scanWorkbenchIds(fs, root);
     const scannedSet = new Set(scanned);
     const registered = new Set(index.workbenches.map((entry) => entry.id));
-    const external = /* @__PURE__ */ new Set();
+    const adopted = adoptedFor(root);
     let nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0);
     let changed = created;
     for (const id of scanned) {
       if (registered.has(id)) continue;
       nextOrder += 1;
       index.workbenches.push({ id, order: nextOrder });
-      external.add(id);
+      adopted.add(id);
       changed = true;
     }
     if (changed) await writeIndex(fs, root, index);
@@ -353,7 +362,7 @@ function createWorkbenchStore(options) {
       entries.push({
         id: entry.id,
         name: scene.name,
-        status: external.has(entry.id) ? "external" : "ok",
+        status: adopted.has(entry.id) ? "adopted" : "ok",
         order: entry.order
       });
     }
@@ -374,12 +383,15 @@ function createWorkbenchStore(options) {
     if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
     }
+    let scene;
     try {
-      return { scene: parseWorkbench(text) };
+      scene = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
       throw new WorkbenchStoreError("file-corrupt", describe(error));
     }
+    adoptedByRoot.get(root)?.delete(id);
+    return { scene };
   }
   async function save(rootInput, payload) {
     const root = path.resolve(rootInput);
@@ -430,6 +442,7 @@ function createWorkbenchStore(options) {
       index.workbenches = index.workbenches.filter((entry) => entry.id !== id);
       await writeIndex(fs, root, index);
     }
+    adoptedByRoot.get(root)?.delete(id);
     return { id };
   }
   return { getRootConfig, setRoot, list, read, save, delete: deleteWorkbench };

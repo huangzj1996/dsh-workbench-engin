@@ -101,14 +101,37 @@ describe('list: index reconciliation', () => {
     await writeScene(root, 'alpha', 'Alpha');
 
     const first = await store.list(root);
-    expect(first.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'external', order: 1 }]);
+    expect(first.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'adopted', order: 1 }]);
     const indexAfterFirst = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
     expect(indexAfterFirst.workbenches).toEqual([{ id: 'alpha', order: 1 }]);
 
     const second = await store.list(root);
-    expect(second.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'ok', order: 1 }]);
+    expect(second.entries).toEqual([{ id: 'alpha', name: 'Alpha', status: 'adopted', order: 1 }]);
     const indexAfterSecond = JSON.parse(await readFile(path.join(root, 'index.json'), 'utf8'));
     expect(indexAfterSecond.workbenches).toEqual([{ id: 'alpha', order: 1 }]);
+  });
+
+  it('keeps flagging a reconciled workbench as adopted until it is opened', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const store = createWorkbenchStore({ dshHome });
+    await writeScene(root, 'alpha', 'Alpha');
+    await writeScene(root, 'beta', 'Beta');
+
+    await expect(store.list(root)).resolves.toMatchObject({
+      entries: [
+        { id: 'alpha', status: 'adopted' },
+        { id: 'beta', status: 'adopted' },
+      ],
+    });
+
+    await store.read(root, 'alpha');
+
+    const afterOpen = await store.list(root);
+    expect(afterOpen.entries).toEqual([
+      { id: 'alpha', name: 'Alpha', status: 'ok', order: 1 },
+      { id: 'beta', name: 'Beta', status: 'adopted', order: 2 },
+    ]);
   });
 
   it('marks an indexed workbench whose directory is gone as missing, without dropping it', async () => {
@@ -154,7 +177,7 @@ describe('list: index reconciliation', () => {
     const result = await store.list(root);
 
     expect(result.entries.map((entry) => entry.id)).toEqual(['alpha', 'beta', 'gamma']);
-    expect(result.entries.map((entry) => entry.status)).toEqual(['ok', 'ok', 'external']);
+    expect(result.entries.map((entry) => entry.status)).toEqual(['ok', 'ok', 'adopted']);
     expect(result.entries[2]?.order).toBe(3);
   });
 
