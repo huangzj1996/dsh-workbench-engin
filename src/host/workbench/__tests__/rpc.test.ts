@@ -185,8 +185,8 @@ describe('workbench RPC', () => {
       body: JSON.stringify({
         type: 'client-request',
         rpcId: 'rpc-1',
-        method: 'getRootConfig',
-        payload: {},
+        method: 'workbench',
+        payload: { method: 'getRootConfig', payload: {} },
       }),
     });
 
@@ -213,8 +213,8 @@ describe('workbench RPC', () => {
         body: JSON.stringify({
           type: 'client-request',
           rpcId: 'rpc-2',
-          method: 'list',
-          payload: {},
+          method: 'workbench',
+          payload: { method: 'list', payload: {} },
         }),
       }),
     );
@@ -237,6 +237,46 @@ describe('workbench RPC', () => {
       new Request('http://localhost/api/workbench', {
         method: 'POST',
         body: JSON.stringify({ method: 'getRootConfig', payload: {} }),
+      }),
+    );
+
+    expect(response.status).toBe(400);
+  });
+
+  it('dispatches the inner call, never the shell endpoint name, as the workbench method', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'rpc-3',
+          method: 'workbench',
+          payload: { method: 'nope', payload: {} },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { result: { ok: boolean; error?: { message: string } } };
+    expect(body.result.ok).toBe(false);
+    // The unknown-method message must name the inner method, not `workbench`.
+    expect(body.result.error?.message).toContain('nope');
+  });
+
+  it('rejects an envelope whose payload is not a workbench call', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'rpc-4',
+          method: 'workbench',
+          payload: {},
+        }),
       }),
     );
 

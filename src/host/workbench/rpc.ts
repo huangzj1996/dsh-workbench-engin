@@ -8,6 +8,7 @@
 import { describeError } from '../../shared/workbench/errors';
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import {
+  parseWorkbenchCall,
   parseWorkbenchClientRequest,
   workbenchServerResponse,
   type WorkbenchRpcMethod,
@@ -113,7 +114,13 @@ export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
       // malformed request becomes a plain 400 the Client reports as transport failure.
       return new Response('invalid client-request envelope', { status: 400 });
     }
-    const result = await dispatch({ method: envelope.method, payload: envelope.payload });
+    // The envelope's `method` is the shell endpoint name (`workbench`); the
+    // workbench method lives one level deeper, in the envelope's payload.
+    const call = parseWorkbenchCall(envelope.payload);
+    if (call === null) {
+      return new Response('invalid workbench call payload', { status: 400 });
+    }
+    const result = await dispatch({ method: call.method, payload: call.payload });
     return Response.json(workbenchServerResponse(envelope.rpcId, result));
   }
 

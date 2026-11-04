@@ -68,6 +68,14 @@ const RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 export interface WorkbenchClientRequest {
   type: 'client-request';
   rpcId: string;
+  /** The shell-level endpoint name (`workbench`), not the workbench method. */
+  method: string;
+  /** The workbench call itself, carried inside the envelope's payload. */
+  payload: unknown;
+}
+
+/** One workbench call carried inside the shell envelope's `payload`. */
+export interface WorkbenchCall {
   method: string;
   payload: unknown;
 }
@@ -77,6 +85,17 @@ export interface WorkbenchServerResponse {
   type: 'server-response';
   rpcId: string;
   result: WorkbenchRpcResult;
+}
+
+/**
+ * Validate the workbench call the Client put in the envelope's `payload`.
+ * Returns `null` for anything malformed so the Host can answer 400.
+ */
+export function parseWorkbenchCall(payload: unknown): WorkbenchCall | null {
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
+  const record = payload as Record<string, unknown>;
+  if (typeof record['method'] !== 'string' || record['method'] === '') return null;
+  return { method: record['method'], payload: record['payload'] };
 }
 
 /**

@@ -91,6 +91,12 @@ function serializeWorkbench(workbench) {
 
 // src/shared/workbench/protocol.ts
 var RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+function parseWorkbenchCall(payload) {
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
+  const record = payload;
+  if (typeof record["method"] !== "string" || record["method"] === "") return null;
+  return { method: record["method"], payload: record["payload"] };
+}
 function parseWorkbenchClientRequest(body) {
   if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
   const record = body;
@@ -593,7 +599,11 @@ function createWorkbenchRpc(options) {
     if (envelope === null) {
       return new Response("invalid client-request envelope", { status: 400 });
     }
-    const result = await dispatch({ method: envelope.method, payload: envelope.payload });
+    const call = parseWorkbenchCall(envelope.payload);
+    if (call === null) {
+      return new Response("invalid workbench call payload", { status: 400 });
+    }
+    const result = await dispatch({ method: call.method, payload: call.payload });
     return Response.json(workbenchServerResponse(envelope.rpcId, result));
   }
   return { dispatch, route };
