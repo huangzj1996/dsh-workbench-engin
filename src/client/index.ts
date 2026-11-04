@@ -5,8 +5,11 @@
  * beside the shell's own New Session button. Disposal follows the plugin fiber
  * (`ctx.effect`), so disabling the bundle removes both again.
  */
+import * as React from 'react';
+
+import { createWorkbenchClient, type ClientRpcContext } from './rpc';
 import { mountHeaderButton } from './sidebar-button';
-import { HelloPanel, PANEL_ID } from './workbench';
+import { HelloPanel, PANEL_ID, type HelloPanelProps } from './workbench';
 
 /** Locale namespace owned by this plugin. */
 const NS = 'workbench';
@@ -25,6 +28,25 @@ const zh: Record<string, string> = {
   'dialog.create': '创建',
   'created.hint': '当前工作台',
   'created.action': '新建工作台',
+  'root.title': '设置工作台根目录',
+  'root.sub': '工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。',
+  'root.label': '根目录路径',
+  'root.placeholder': '例如：D:\\work\\my-workbenches',
+  'root.save': '保存并继续',
+  'root.saving': '校验中…',
+  'root.needPath': '请先填写文件夹路径',
+  'root.change': '更换根目录',
+  'root.cancel': '取消',
+  'list.loading': '正在读取…',
+  'list.refresh': '刷新',
+  'list.retry': '重试',
+  'list.empty.title': '还没有工作台',
+  'list.empty.sub': '这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或稍后用「新建工作台」创建。',
+  'list.status.external': '外部新建',
+  'list.status.missing': '缺失',
+  'list.status.corrupt': '损坏',
+  'error.title': '读取失败',
+  'error.connection': '连接服务不可用，请稍后重试',
 };
 
 /** English dictionary. */
@@ -41,6 +63,25 @@ const en: Record<string, string> = {
   'dialog.create': 'Create',
   'created.hint': 'Current workbench',
   'created.action': 'New workbench',
+  'root.title': 'Set the workbench root folder',
+  'root.sub': 'The index and every workbench JSON will be written into this folder.',
+  'root.label': 'Root folder path',
+  'root.placeholder': 'e.g. D:\\work\\my-workbenches',
+  'root.save': 'Save and continue',
+  'root.saving': 'Checking…',
+  'root.needPath': 'Enter a folder path first',
+  'root.change': 'Change root',
+  'root.cancel': 'Cancel',
+  'list.loading': 'Loading…',
+  'list.refresh': 'Refresh',
+  'list.retry': 'Retry',
+  'list.empty.title': 'No workbench yet',
+  'list.empty.sub': 'This root has no workbench yet. Ask an AI to drop an <id>/<id>.json here, or create one later with “New workbench”.',
+  'list.status.external': 'New on disk',
+  'list.status.missing': 'Missing',
+  'list.status.corrupt': 'Corrupt',
+  'error.title': 'Could not load',
+  'error.connection': 'The connection service is unavailable; try again shortly',
 };
 
 /** The part of the Client locale service this plugin uses. */
@@ -56,7 +97,7 @@ interface SlotsFace {
 }
 
 /** The Client context shape handed to a Client half. */
-export interface ClientContext {
+export interface ClientContext extends ClientRpcContext {
   locale: LocaleFace;
   slots: SlotsFace;
   effect(setup: () => (() => void) | void, label?: string): void;
@@ -74,10 +115,14 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS);
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'workbench: dictionaries');
 
+  const rpc = createWorkbenchClient(ctx);
+  const panel = (props: HelloPanelProps): React.ReactElement =>
+    React.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc });
+
   ctx.slots.inject('main', () =>
     ctx.slots.register(
       { name: 'main', key: PANEL_ID, locale: NS },
-      HelloPanel,
+      panel,
     ),
   );
 

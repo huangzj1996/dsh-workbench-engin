@@ -1,7 +1,482 @@
 // 由 scripts/build.mjs 从 src/host/** 生成 —— 不要手改本文件。
+// src/shared/workbench/errors.ts
+var BASE_MESSAGE = {
+  "root-unset": "\u5C1A\u672A\u8BBE\u7F6E\u5DE5\u4F5C\u53F0\u6839\u76EE\u5F55",
+  "root-unreachable": "\u65E0\u6CD5\u8BBF\u95EE\u5DE5\u4F5C\u53F0\u6839\u76EE\u5F55",
+  "id-invalid": "\u5DE5\u4F5C\u53F0 id \u4E0D\u5408\u6CD5",
+  "scene-invalid": "\u5DE5\u4F5C\u53F0\u914D\u7F6E\u4E0D\u5408\u6CD5",
+  "write-failed": "\u5199\u5165\u5931\u8D25",
+  "file-corrupt": "\u6587\u4EF6\u635F\u574F",
+  "not-found": "\u672A\u627E\u5230\u8BE5\u5DE5\u4F5C\u53F0",
+  "too-large": "\u6587\u4EF6\u8D85\u8FC7 256KB \u4E0A\u9650",
+  internal: "\u64CD\u4F5C\u5931\u8D25"
+};
+var WorkbenchStoreError = class extends Error {
+  code;
+  constructor(code, detail) {
+    super(detail === void 0 || detail === "" ? BASE_MESSAGE[code] : `${BASE_MESSAGE[code]}\uFF1A${detail}`);
+    this.name = "WorkbenchStoreError";
+    this.code = code;
+  }
+};
+
+// src/shared/workbench/schema.ts
+var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+function isWorkbenchId(value) {
+  return typeof value === "string" && WORKBENCH_ID_PATTERN.test(value);
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isPositiveInteger(value) {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1;
+}
+function invalid(reason) {
+  throw new WorkbenchStoreError("scene-invalid", reason);
+}
+function validatePanel(raw, index) {
+  if (!isRecord(raw)) invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u4E0D\u662F\u5BF9\u8C61`);
+  const panel = raw;
+  if (typeof panel["id"] !== "string" || panel["id"].trim() === "") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11 id`);
+  }
+  if (typeof panel["title"] !== "string") invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u6807\u9898`);
+  if (typeof panel["type"] !== "string" || panel["type"].trim() === "") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7F3A\u5C11\u7C7B\u578B`);
+  }
+  if (panel["sub"] !== void 0 && typeof panel["sub"] !== "string") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684\u526F\u6807\u9898\u5FC5\u987B\u662F\u5B57\u7B26\u4E32`);
+  }
+  for (const key of ["col", "row", "w", "h"]) {
+    if (panel[key] !== void 0 && !isPositiveInteger(panel[key])) {
+      invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 ${key} \u5FC5\u987B\u662F\u6B63\u6574\u6570`);
+    }
+  }
+  if (panel["expand"] !== void 0 && typeof panel["expand"] !== "boolean") {
+    invalid(`\u7B2C ${index + 1} \u4E2A\u5B50\u9762\u677F\u7684 expand \u5FC5\u987B\u662F\u5E03\u5C14\u503C`);
+  }
+  return panel;
+}
+function validateScene(raw) {
+  if (!isRecord(raw)) invalid("\u914D\u7F6E\u5FC5\u987B\u662F JSON \u5BF9\u8C61");
+  const scene = raw;
+  if (!isWorkbenchId(scene["id"])) invalid("\u7F3A\u5C11\u5408\u6CD5\u7684 id");
+  if (typeof scene["name"] !== "string" || scene["name"].trim() === "") invalid("\u7F3A\u5C11\u540D\u79F0");
+  if (scene["description"] !== void 0 && typeof scene["description"] !== "string") {
+    invalid("description \u5FC5\u987B\u662F\u5B57\u7B26\u4E32");
+  }
+  if (scene["cols"] !== void 0 && !isPositiveInteger(scene["cols"])) invalid("cols \u5FC5\u987B\u662F\u6B63\u6574\u6570");
+  if (!Array.isArray(scene["panels"])) invalid("panels \u5FC5\u987B\u662F\u6570\u7EC4");
+  scene["panels"].forEach((panel, index) => validatePanel(panel, index));
+  return scene;
+}
+function parseWorkbench(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new WorkbenchStoreError("file-corrupt", error instanceof Error ? error.message : String(error));
+  }
+  return validateScene(raw);
+}
+function serializeWorkbench(scene) {
+  return `${JSON.stringify(scene, null, 2)}
+`;
+}
+
+// src/host/workbench/store.ts
+import * as nodeFs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+var CONFIG_DIR = "dsh-hello-word";
+var CONFIG_FILE = "config.json";
+var INDEX_FILE = "index.json";
+var INDEX_VERSION = 1;
+var MAX_FILE_BYTES = 256 * 1024;
+var nodeFsAdapter = {
+  readFile: (file, encoding) => nodeFs.readFile(file, encoding),
+  writeFile: (file, data, encoding) => nodeFs.writeFile(file, data, encoding),
+  rename: (from, to) => nodeFs.rename(from, to),
+  rm: (target, options) => nodeFs.rm(target, options),
+  mkdir: async (dir, options) => {
+    await nodeFs.mkdir(dir, options);
+  },
+  async readdir(dir) {
+    const entries = await nodeFs.readdir(dir, { withFileTypes: true });
+    return entries.map((entry) => ({ name: entry.name, isDirectory: () => entry.isDirectory() }));
+  },
+  stat: (target) => nodeFs.stat(target)
+};
+function resolveDshHome(env) {
+  const fromEnv = env["DSH_HOME"];
+  return fromEnv !== void 0 && fromEnv.trim() !== "" ? fromEnv : path.join(os.homedir(), ".dsh");
+}
+var temporaryCounter = 0;
+async function atomicWrite(fs, file, data) {
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  temporaryCounter += 1;
+  const temporary = path.join(
+    path.dirname(file),
+    `.${path.basename(file)}.${process.pid}.${temporaryCounter}.tmp`
+  );
+  try {
+    await fs.writeFile(temporary, data, "utf8");
+    await fs.rename(temporary, file);
+  } catch (error) {
+    await fs.rm(temporary, { force: true }).catch(() => void 0);
+    throw error;
+  }
+}
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+function isNotFound(error) {
+  return typeof error === "object" && error !== null && error.code === "ENOENT";
+}
+async function assertRoot(fs, root) {
+  try {
+    const stats = await fs.stat(root);
+    if (!stats.isDirectory()) throw new Error("\u4E0D\u662F\u6587\u4EF6\u5939");
+  } catch (error) {
+    throw new WorkbenchStoreError("root-unreachable", `\u8DEF\u5F84\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u6587\u4EF6\u5939\uFF1A${root}`);
+  }
+}
+async function readIndex(fs, root) {
+  let text;
+  try {
+    text = await fs.readFile(path.join(root, INDEX_FILE), "utf8");
+  } catch (error) {
+    if (isNotFound(error)) {
+      return { data: { version: INDEX_VERSION, workbenches: [] }, created: true };
+    }
+    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u65E0\u6CD5\u8BFB\u53D6\uFF1A${describe(error)}`);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch (error) {
+    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${describe(error)}`);
+  }
+  const workbenches = typeof raw === "object" && raw !== null ? raw["workbenches"] : void 0;
+  const valid = Array.isArray(workbenches) && workbenches.every((entry) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const row = entry;
+    return typeof row["id"] === "string" && typeof row["order"] === "number" && Number.isInteger(row["order"]) && row["order"] >= 1;
+  });
+  if (!valid) throw new WorkbenchStoreError("file-corrupt", "\u7D22\u5F15\u6587\u4EF6\u7ED3\u6784\u4E0D\u6B63\u786E");
+  const data = raw;
+  return { data, created: false };
+}
+async function writeIndex(fs, root, data) {
+  const next = {
+    ...data,
+    version: typeof data.version === "number" ? data.version : INDEX_VERSION,
+    workbenches: data.workbenches
+  };
+  try {
+    await atomicWrite(fs, path.join(root, INDEX_FILE), `${JSON.stringify(next, null, 2)}
+`);
+  } catch (error) {
+    throw new WorkbenchStoreError("write-failed", describe(error));
+  }
+}
+async function scanWorkbenchIds(fs, root) {
+  let entries;
+  try {
+    entries = await fs.readdir(root);
+  } catch (error) {
+    throw new WorkbenchStoreError("root-unreachable", `\u65E0\u6CD5\u8BFB\u53D6\u6839\u76EE\u5F55\uFF1A${root}\uFF08${describe(error)}\uFF09`);
+  }
+  const ids = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !isWorkbenchId(entry.name)) continue;
+    try {
+      const stats = await fs.stat(path.join(root, entry.name, `${entry.name}.json`));
+      if (stats.isFile()) ids.push(entry.name);
+    } catch {
+    }
+  }
+  return ids.sort();
+}
+async function readSceneOrNull(fs, file) {
+  try {
+    return parseWorkbench(await fs.readFile(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+function assertWorkbenchId(value) {
+  if (!isWorkbenchId(value)) {
+    throw new WorkbenchStoreError("id-invalid", typeof value === "string" ? value : "");
+  }
+  return value;
+}
+function rootFrom(payload) {
+  const raw = typeof payload === "object" && payload !== null ? payload["root"] : payload;
+  if (typeof raw !== "string" || raw.trim() === "") {
+    throw new WorkbenchStoreError("root-unreachable", "\u8BF7\u586B\u5199\u6587\u4EF6\u5939\u8DEF\u5F84");
+  }
+  return raw.trim();
+}
+async function assertWritable(fs, root) {
+  temporaryCounter += 1;
+  const probe = path.join(root, `.workbench-write-probe-${process.pid}-${temporaryCounter}`);
+  try {
+    await fs.writeFile(probe, "", "utf8");
+  } catch (error) {
+    throw new WorkbenchStoreError("root-unreachable", describe(error));
+  } finally {
+    await fs.rm(probe, { force: true }).catch(() => void 0);
+  }
+}
+function createWorkbenchStore(options) {
+  const fs = options.fs ?? nodeFsAdapter;
+  const configFile = path.join(options.dshHome, CONFIG_DIR, CONFIG_FILE);
+  async function getRootConfig() {
+    let text;
+    try {
+      text = await fs.readFile(configFile, "utf8");
+    } catch {
+      return { root: null };
+    }
+    try {
+      const raw = JSON.parse(text);
+      const root = typeof raw === "object" && raw !== null ? raw["root"] : void 0;
+      return { root: typeof root === "string" && root.trim() !== "" ? path.resolve(root) : null };
+    } catch {
+      return { root: null };
+    }
+  }
+  async function setRoot(payload) {
+    const root = path.resolve(rootFrom(payload));
+    try {
+      const stats = await fs.stat(root);
+      if (!stats.isDirectory()) throw new Error("\u4E0D\u662F\u6587\u4EF6\u5939");
+    } catch (error) {
+      throw new WorkbenchStoreError("root-unreachable", `\u8DEF\u5F84\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u6587\u4EF6\u5939\uFF1A${root}\uFF08${describe(error)}\uFF09`);
+    }
+    await assertWritable(fs, root);
+    try {
+      await atomicWrite(fs, configFile, `${JSON.stringify({ root }, null, 2)}
+`);
+    } catch (error) {
+      throw new WorkbenchStoreError("write-failed", describe(error));
+    }
+    return { root };
+  }
+  async function list(rootInput) {
+    const root = path.resolve(rootInput);
+    await assertRoot(fs, root);
+    const { data: index, created } = await readIndex(fs, root);
+    const scanned = await scanWorkbenchIds(fs, root);
+    const scannedSet = new Set(scanned);
+    const registered = new Set(index.workbenches.map((entry) => entry.id));
+    const external = /* @__PURE__ */ new Set();
+    let nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0);
+    let changed = created;
+    for (const id of scanned) {
+      if (registered.has(id)) continue;
+      nextOrder += 1;
+      index.workbenches.push({ id, order: nextOrder });
+      external.add(id);
+      changed = true;
+    }
+    if (changed) await writeIndex(fs, root, index);
+    const ordered = [...index.workbenches].sort(
+      (left, right) => left.order - right.order || left.id.localeCompare(right.id)
+    );
+    const entries = [];
+    for (const entry of ordered) {
+      if (!scannedSet.has(entry.id)) {
+        entries.push({ id: entry.id, name: entry.id, status: "missing", order: entry.order });
+        continue;
+      }
+      const scene = await readSceneOrNull(fs, path.join(root, entry.id, `${entry.id}.json`));
+      if (scene === null) {
+        entries.push({ id: entry.id, name: entry.id, status: "corrupt", order: entry.order });
+        continue;
+      }
+      entries.push({
+        id: entry.id,
+        name: scene.name,
+        status: external.has(entry.id) ? "external" : "ok",
+        order: entry.order
+      });
+    }
+    return { root, entries };
+  }
+  async function read(rootInput, idInput) {
+    const id = assertWorkbenchId(idInput);
+    const root = path.resolve(rootInput);
+    await assertRoot(fs, root);
+    const file = path.join(root, id, `${id}.json`);
+    let text;
+    try {
+      text = await fs.readFile(file, "utf8");
+    } catch (error) {
+      if (isNotFound(error)) throw new WorkbenchStoreError("not-found", `\u5DE5\u4F5C\u53F0 ${id}`);
+      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6 ${id}/${id}.json\uFF1A${describe(error)}`);
+    }
+    if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
+      throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
+    }
+    try {
+      return { scene: parseWorkbench(text) };
+    } catch (error) {
+      if (error instanceof WorkbenchStoreError) throw error;
+      throw new WorkbenchStoreError("file-corrupt", describe(error));
+    }
+  }
+  async function save(rootInput, payload) {
+    const root = path.resolve(rootInput);
+    const rawId = typeof payload === "object" && payload !== null ? payload["id"] : void 0;
+    const id = assertWorkbenchId(rawId);
+    const scene = validateScene(payload);
+    const text = serializeWorkbench(scene);
+    if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
+      throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
+    }
+    await assertRoot(fs, root);
+    try {
+      await atomicWrite(fs, path.join(root, id, `${id}.json`), text);
+    } catch (error) {
+      throw new WorkbenchStoreError("write-failed", describe(error));
+    }
+    const { data: index } = await readIndex(fs, root);
+    if (!index.workbenches.some((entry) => entry.id === id)) {
+      const nextOrder = index.workbenches.reduce((max, entry) => Math.max(max, entry.order), 0) + 1;
+      index.workbenches.push({ id, order: nextOrder });
+      await writeIndex(fs, root, index);
+    }
+    return { scene };
+  }
+  async function deleteWorkbench(rootInput, idInput) {
+    const id = assertWorkbenchId(idInput);
+    const root = path.resolve(rootInput);
+    await assertRoot(fs, root);
+    const dir = path.join(root, id);
+    let exists = false;
+    try {
+      exists = (await fs.stat(dir)).isDirectory();
+    } catch {
+      exists = false;
+    }
+    const { data: index } = await readIndex(fs, root);
+    const hadEntry = index.workbenches.some((entry) => entry.id === id);
+    if (!exists && !hadEntry) throw new WorkbenchStoreError("not-found", `\u5DE5\u4F5C\u53F0 ${id}`);
+    if (exists) {
+      try {
+        await fs.rm(dir, { recursive: true, force: true });
+      } catch (error) {
+        throw new WorkbenchStoreError("write-failed", describe(error));
+      }
+    }
+    if (hadEntry) {
+      index.workbenches = index.workbenches.filter((entry) => entry.id !== id);
+      await writeIndex(fs, root, index);
+    }
+    return { id };
+  }
+  return { getRootConfig, setRoot, list, read, save, delete: deleteWorkbench };
+}
+
+// src/host/workbench/rpc.ts
+var WORKBENCH_RPC_PATH = "/api/workbench";
+function field(payload, key) {
+  return typeof payload === "object" && payload !== null ? payload[key] : void 0;
+}
+function failure(error) {
+  if (error instanceof WorkbenchStoreError) {
+    return { ok: false, error: { code: error.code, message: error.message } };
+  }
+  return {
+    ok: false,
+    error: { code: "internal", message: error instanceof Error ? error.message : String(error) }
+  };
+}
+function createWorkbenchRpc(options) {
+  const store = createWorkbenchStore(options);
+  async function resolveRoot() {
+    const config = await store.getRootConfig();
+    if (config.root === null) throw new WorkbenchStoreError("root-unset");
+    return config.root;
+  }
+  async function dispatch(request) {
+    if (typeof request !== "object" || request === null || typeof request["method"] !== "string") {
+      return failure(new WorkbenchStoreError("internal", "RPC \u8BF7\u6C42\u7F3A\u5C11 method"));
+    }
+    const call = request;
+    try {
+      switch (call.method) {
+        case "getRootConfig":
+          return { ok: true, value: await store.getRootConfig() };
+        case "setRoot":
+          return { ok: true, value: await store.setRoot(call.payload) };
+        case "list":
+          return { ok: true, value: await store.list(await resolveRoot()) };
+        case "read":
+          return { ok: true, value: await store.read(await resolveRoot(), field(call.payload, "id")) };
+        case "save":
+          return { ok: true, value: await store.save(await resolveRoot(), field(call.payload, "scene")) };
+        case "delete":
+          return { ok: true, value: await store.delete(await resolveRoot(), field(call.payload, "id")) };
+        default:
+          return failure(new WorkbenchStoreError("internal", `\u672A\u77E5\u7684 RPC \u65B9\u6CD5\uFF1A${call.method}`));
+      }
+    } catch (error) {
+      return failure(error);
+    }
+  }
+  async function route(request) {
+    if (request.method !== "POST") {
+      return new Response("method not allowed", { status: 405 });
+    }
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json(failure(new WorkbenchStoreError("internal", "\u8BF7\u6C42\u4F53\u4E0D\u662F\u5408\u6CD5\u7684 JSON")), {
+        status: 400
+      });
+    }
+    return Response.json(await dispatch(body));
+  }
+  return { dispatch, route };
+}
+
 // src/host/index.ts
-function apply() {
+var inject = ["connection"];
+function apply(ctx) {
+  let registered = false;
+  const register = () => {
+    if (registered) return;
+    const registry = ctx.get("connection")?.fetch;
+    if (registry === void 0 || typeof registry.register !== "function") return;
+    const rpc = createWorkbenchRpc({ dshHome: resolveDshHome(process.env) });
+    try {
+      const dispose = registry.register({
+        path: WORKBENCH_RPC_PATH,
+        methods: ["POST"],
+        requestBody: "buffered",
+        fetch: (request) => rpc.route(request)
+      });
+      registered = true;
+      if (typeof dispose === "function" && typeof ctx.effect === "function") {
+        ctx.effect(() => dispose, "dsh-hello-word: workbench RPC route");
+      }
+    } catch {
+    }
+  };
+  if (typeof ctx.inject === "function") {
+    try {
+      ctx.inject(["connection"], register);
+      return;
+    } catch {
+    }
+  }
+  register();
 }
 export {
-  apply
+  apply,
+  inject
 };

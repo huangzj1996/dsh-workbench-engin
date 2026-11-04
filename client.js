@@ -42,103 +42,78 @@ __export(index_exports, {
   name: () => name
 });
 module.exports = __toCommonJS(index_exports);
-
-// src/client/workbench.ts
 var React3 = __toESM(require("react"), 1);
 
-// src/client/create-workbench-dialog.ts
-var React = __toESM(require("react"), 1);
-
-// src/client/workbench-name.ts
-function normalizeWorkbenchName(raw) {
-  const trimmed = raw.trim();
-  return trimmed === "" ? null : trimmed;
-}
-
-// src/client/create-workbench-dialog.ts
-function CreateWorkbenchDialog(props) {
-  const tr = props.translate;
-  const [draftName, setDraftName] = React.useState("");
-  const inputRef = React.useRef(null);
-  React.useEffect(() => {
-    inputRef.current?.focus();
-    const onKeyDown = (event) => {
-      if (event.key !== "Escape" || event.shiftKey) return;
-      event.preventDefault();
-      event.stopPropagation();
-      props.onClose();
+// src/client/rpc.ts
+var CARRIER_CHANNEL = "/api";
+var CARRIER_ENDPOINT = "workbench";
+var CONNECTION_WAIT_MS = 5e3;
+var WorkbenchRpcError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(message);
+    this.name = "WorkbenchRpcError";
+    this.code = code;
+  }
+};
+async function resolveConnection(ctx) {
+  const existing = ctx.get("connection");
+  if (existing !== void 0 && existing.rpc !== void 0) return existing;
+  if (typeof ctx.inject !== "function") return existing;
+  await new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
     };
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => document.removeEventListener("keydown", onKeyDown, true);
-  }, [props.onClose]);
-  const create = () => {
-    const name2 = normalizeWorkbenchName(draftName);
-    if (name2 === null) return;
-    props.onCreate(name2);
-  };
-  const canCreate = normalizeWorkbenchName(draftName) !== null;
-  return React.createElement(
-    "div",
-    {
-      className: "dshwb-overlay",
-      onClick: props.onClose
-    },
-    React.createElement(
-      "div",
-      {
-        className: "dshwb-dialog",
-        role: "dialog",
-        "aria-modal": true,
-        "aria-label": tr("dialog.title", "创建工作台"),
-        onClick: (event) => event.stopPropagation()
-      },
-      React.createElement("h2", { className: "dshwb-dialog-title" }, tr("dialog.title", "创建工作台")),
-      React.createElement("p", { className: "dshwb-dialog-sub" }, tr("dialog.sub", "给它起个名字，之后可以随时修改。")),
-      React.createElement(
-        "label",
-        { className: "dshwb-label" },
-        tr("dialog.nameLabel", "工作台名称"),
-        React.createElement("input", {
-          ref: inputRef,
-          className: "dshwb-input",
-          type: "text",
-          value: draftName,
-          placeholder: tr("dialog.namePlaceholder", "例如：我的工作台"),
-          autoComplete: "off",
-          spellCheck: false,
-          onChange: (event) => setDraftName(event.target.value),
-          onKeyDown: (event) => {
-            if (event.key !== "Enter") return;
-            event.preventDefault();
-            create();
-          }
-        })
-      ),
-      React.createElement(
-        "div",
-        { className: "dshwb-actions" },
-        React.createElement(
-          "button",
-          { type: "button", className: "dshwb-secondary", onClick: props.onClose },
-          tr("dialog.cancel", "取消")
-        ),
-        React.createElement(
-          "button",
-          {
-            type: "button",
-            className: "dshwb-primary",
-            disabled: !canCreate,
-            onClick: create
-          },
-          tr("dialog.create", "创建")
-        )
-      )
-    )
-  );
+    try {
+      ctx.inject?.(["connection"], done);
+    } catch {
+      done();
+    }
+    setTimeout(done, CONNECTION_WAIT_MS);
+  });
+  return ctx.get("connection");
 }
+function createWorkbenchClient(ctx) {
+  async function call(method, payload) {
+    const connection = await resolveConnection(ctx);
+    const rpc = connection?.rpc;
+    if (rpc === void 0 || typeof rpc.call !== "function") {
+      throw new WorkbenchRpcError("internal", "连接服务不可用，请稍后重试");
+    }
+    let reply;
+    try {
+      reply = await rpc.call(CARRIER_CHANNEL, CARRIER_ENDPOINT, { method, payload });
+    } catch (error) {
+      throw new WorkbenchRpcError(
+        "internal",
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    const envelope = reply;
+    if (typeof envelope === "object" && envelope !== null && "ok" in envelope) {
+      if (envelope.ok) return envelope.value;
+      throw new WorkbenchRpcError(envelope.error.code, envelope.error.message);
+    }
+    throw new WorkbenchRpcError("internal", `RPC 返回格式不正确：${method}`);
+  }
+  return {
+    getRootConfig: () => call("getRootConfig", {}),
+    setRoot: (root) => call("setRoot", { root }),
+    list: () => call("list", {}),
+    read: (id) => call("read", { id }),
+    save: (scene) => call("save", { scene }),
+    delete: (id) => call("delete", { id })
+  };
+}
+
+// src/client/workbench.ts
+var React2 = __toESM(require("react"), 1);
 
 // src/client/hero-backdrop.ts
-var React2 = __toESM(require("react"), 1);
+var React = __toESM(require("react"), 1);
 var HERO_FALLBACK = "radial-gradient(ellipse at 89% 46%, #777f89 0%, #204a7e 35%, #000 75%)";
 var HERO_MASK = "linear-gradient(#000000fc 0%, #000000e8 8.98%, transparent 100%)";
 var HERO_BASE = "#0f1722";
@@ -448,9 +423,9 @@ function startHeroShader(canvas, firstFrameOnly) {
   };
 }
 function HeroBackdrop() {
-  const layerRef = React2.useRef(null);
-  const canvasRef = React2.useRef(null);
-  React2.useEffect(() => {
+  const layerRef = React.useRef(null);
+  const canvasRef = React.useRef(null);
+  React.useEffect(() => {
     const layer = layerRef.current;
     const canvas = canvasRef.current;
     if (layer === null || canvas === null) return void 0;
@@ -465,7 +440,7 @@ function HeroBackdrop() {
       if (dispose !== null) dispose();
     };
   }, []);
-  return React2.createElement(
+  return React.createElement(
     "div",
     {
       ref: layerRef,
@@ -481,7 +456,7 @@ function HeroBackdrop() {
         WebkitMask: HERO_MASK
       }
     },
-    React2.createElement("canvas", {
+    React.createElement("canvas", {
       ref: canvasRef,
       "aria-hidden": true,
       style: {
@@ -499,54 +474,259 @@ function HeroBackdrop() {
 // src/client/workbench.ts
 var PANEL_ID = "hello-word";
 var PANEL_CSS = `
-.dshwb-content{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px}
-.dshwb-stack{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:440px;text-align:center}
+.dshwb-content{position:absolute;inset:0;z-index:1;display:flex;align-items:center;justify-content:center;padding:24px;overflow:auto}
+.dshwb-stack{display:flex;flex-direction:column;align-items:center;gap:10px;width:100%;max-width:520px;text-align:center}
 .dshwb-hint{margin:0;color:#eef3fb;font-size:17px;font-weight:500;letter-spacing:.02em}
 .dshwb-sub{margin:0;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.7}
-.dshwb-created-name{margin:0;color:#eef3fb;font-size:24px;font-weight:600;letter-spacing:.02em;word-break:break-word}
-.dshwb-primary{display:inline-flex;align-items:center;justify-content:center;margin-top:8px;padding:9px 20px;border:1px solid transparent;border-radius:10px;background:var(--dsw-alias-brand-primary);color:#fff;font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:filter .15s ease,transform .15s ease}
+.dshwb-card{box-sizing:border-box;width:100%;padding:18px 18px 16px;border:1px solid rgba(255,255,255,.14);border-radius:14px;background:rgba(9,15,26,.62);backdrop-filter:blur(14px);color:#eef3fb;text-align:left;box-shadow:0 18px 48px rgba(0,0,0,.35)}
+.dshwb-card-title{margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.4}
+.dshwb-card-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
+.dshwb-label{display:block;margin:0 0 6px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-input{box-sizing:border-box;width:100%;padding:9px 10px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
+.dshwb-input:focus{border-color:var(--dsw-alias-brand-primary)}
+.dshwb-input::placeholder{color:rgba(226,234,248,.4)}
+.dshwb-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.dshwb-primary{display:inline-flex;align-items:center;justify-content:center;padding:8px 18px;border:1px solid transparent;border-radius:9px;background:var(--dsw-alias-brand-primary);color:#fff;font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:filter .15s ease}
 .dshwb-primary:hover{filter:brightness(1.08)}
 .dshwb-primary:active{transform:translateY(1px)}
 .dshwb-primary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
 .dshwb-primary:disabled{opacity:.45;cursor:not-allowed;filter:none;transform:none}
-.dshwb-secondary{display:inline-flex;align-items:center;justify-content:center;padding:8px 16px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;background:transparent;color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;font-weight:500;line-height:1.4;cursor:pointer;transition:background .15s ease}
-.dshwb-secondary:hover{background:var(--dsw-alias-bg-layer-2)}
+.dshwb-secondary{display:inline-flex;align-items:center;justify-content:center;padding:7px 14px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:transparent;color:#eef3fb;font-family:inherit;font-size:12.5px;font-weight:500;line-height:1.4;cursor:pointer;transition:background .15s ease}
+.dshwb-secondary:hover{background:rgba(255,255,255,.08)}
 .dshwb-secondary:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}
-.dshwb-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(3,7,16,.58)}
-.dshwb-dialog{box-sizing:border-box;width:360px;max-width:100%;padding:20px;border:1px solid var(--dsw-alias-border-l2);border-radius:14px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-primary);box-shadow:0 24px 70px rgba(0,0,0,.5);text-align:left}
-.dshwb-dialog-title{margin:0 0 4px;font-size:15px;font-weight:600;line-height:1.4}
-.dshwb-dialog-sub{margin:0 0 14px;color:var(--dsw-alias-label-secondary);font-size:12.5px;line-height:1.6}
-.dshwb-label{display:block;margin:0 0 6px;color:var(--dsw-alias-label-secondary);font-size:12px}
-.dshwb-input{box-sizing:border-box;width:100%;padding:8px 10px;border:1px solid var(--dsw-alias-border-l1);border-radius:8px;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
-.dshwb-input:focus{border-color:var(--dsw-alias-brand-primary)}
-.dshwb-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
-.dshwb-actions .dshwb-primary{margin-top:0}
+.dshwb-link{padding:0;border:0;background:none;color:rgba(226,234,248,.68);font-family:inherit;font-size:12px;line-height:1.4;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.dshwb-link:hover{color:#eef3fb}
+.dshwb-link:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px;border-radius:4px}
+.dshwb-error{margin:10px 0 0;color:#ffb4a8;font-size:12.5px;line-height:1.6;word-break:break-word}
+.dshwb-root-bar{display:flex;align-items:center;gap:10px;width:100%;margin-bottom:10px;text-align:left}
+.dshwb-root-path{flex:1;min-width:0;overflow:hidden;color:rgba(226,234,248,.6);font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-list{display:flex;flex-direction:column;gap:8px;width:100%;margin:0;padding:0;list-style:none;text-align:left}
+.dshwb-item{display:flex;align-items:center;gap:10px;padding:11px 13px;border:1px solid rgba(255,255,255,.12);border-radius:11px;background:rgba(255,255,255,.05)}
+.dshwb-item-name{flex:1;min-width:0;overflow:hidden;color:#eef3fb;font-size:13.5px;font-weight:500;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-item-id{overflow:hidden;max-width:45%;color:rgba(226,234,248,.48);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:11.5px;white-space:nowrap;text-overflow:ellipsis}
+.dshwb-badge{padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:1.6;white-space:nowrap}
+.dshwb-badge-external{background:rgba(86,160,255,.18);color:#a9ceff}
+.dshwb-badge-missing{background:rgba(255,196,84,.16);color:#ffd88e}
+.dshwb-badge-corrupt{background:rgba(255,112,96,.18);color:#ffb4a8}
+.dshwb-loading{margin:0;color:rgba(226,234,248,.62);font-size:12.5px}
 `;
-var rememberedWorkbench = null;
+var STATUS_KEYS = {
+  external: "list.status.external",
+  missing: "list.status.missing",
+  corrupt: "list.status.corrupt"
+};
 function HelloPanel(props) {
   const translate = props.t;
-  const tr = (key, fallback) => {
-    if (typeof translate !== "function") return fallback;
-    const value = translate(key);
-    return value === key ? fallback : value;
+  const tr = React2.useCallback(
+    (key, fallback) => {
+      if (typeof translate !== "function") return fallback;
+      const value = translate(key);
+      return value === key ? fallback : value;
+    },
+    [translate]
+  );
+  const rpc = props.rpc;
+  const [state, setState] = React2.useState({ phase: "loading" });
+  const [attempt, setAttempt] = React2.useState(0);
+  const [editingRoot, setEditingRoot] = React2.useState(false);
+  const [pathDraft, setPathDraft] = React2.useState("");
+  const [savingRoot, setSavingRoot] = React2.useState(false);
+  const [saveError, setSaveError] = React2.useState(null);
+  const load = React2.useCallback(async () => {
+    if (rpc === void 0) {
+      setState({ phase: "error", message: tr("error.connection", "连接服务不可用，请稍后重试") });
+      return;
+    }
+    setState({ phase: "loading" });
+    try {
+      const config = await rpc.getRootConfig();
+      if (config.root === null) {
+        setState({ phase: "no-root" });
+        return;
+      }
+      const list = await rpc.list();
+      setState({ phase: "ready", root: list.root, entries: list.entries });
+    } catch (error) {
+      setState({
+        phase: "error",
+        message: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }, [rpc, tr]);
+  React2.useEffect(() => {
+    void load();
+  }, [load, attempt]);
+  const startEditing = (prefill) => {
+    setPathDraft(prefill);
+    setSaveError(null);
+    setEditingRoot(true);
   };
-  const [workbench, setWorkbench] = React3.useState(() => rememberedWorkbench);
-  const [dialogOpen, setDialogOpen] = React3.useState(false);
-  const triggerRef = React3.useRef(null);
-  const closeDialog = React3.useCallback(() => {
-    setDialogOpen(false);
-    window.requestAnimationFrame(() => triggerRef.current?.focus());
-  }, []);
-  const openDialog = React3.useCallback(() => {
-    setDialogOpen(true);
-  }, []);
-  const createWorkbench = React3.useCallback((name2) => {
-    rememberedWorkbench = name2;
-    setWorkbench(name2);
-    closeDialog();
-  }, [closeDialog]);
-  const empty = workbench === null;
-  return React3.createElement(
+  const saveRoot = async () => {
+    if (rpc === void 0) return;
+    const path = pathDraft.trim();
+    if (path === "") {
+      setSaveError(tr("root.needPath", "请先填写文件夹路径"));
+      return;
+    }
+    setSavingRoot(true);
+    setSaveError(null);
+    try {
+      await rpc.setRoot(path);
+      setEditingRoot(false);
+      setPathDraft("");
+      setAttempt((value) => value + 1);
+    } catch (error) {
+      setSaveError(
+        error instanceof WorkbenchRpcError ? error.message : error instanceof Error ? error.message : String(error)
+      );
+    } finally {
+      setSavingRoot(false);
+    }
+  };
+  const renderRootForm = () => {
+    return React2.createElement(
+      "div",
+      { className: "dshwb-card" },
+      React2.createElement("h2", { className: "dshwb-card-title" }, tr("root.title", "设置工作台根目录")),
+      React2.createElement(
+        "p",
+        { className: "dshwb-card-sub" },
+        tr("root.sub", "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。")
+      ),
+      React2.createElement(
+        "label",
+        { className: "dshwb-label", htmlFor: "dshwb-root-input" },
+        tr("root.label", "根目录路径")
+      ),
+      React2.createElement("input", {
+        id: "dshwb-root-input",
+        className: "dshwb-input",
+        type: "text",
+        value: pathDraft,
+        placeholder: tr("root.placeholder", "例如：D:\\work\\my-workbenches"),
+        autoComplete: "off",
+        spellCheck: false,
+        disabled: savingRoot,
+        onChange: (event) => setPathDraft(event.target.value),
+        onKeyDown: (event) => {
+          if (event.key !== "Enter") return;
+          event.preventDefault();
+          void saveRoot();
+        }
+      }),
+      saveError !== null && React2.createElement("p", { className: "dshwb-error", role: "alert" }, saveError),
+      React2.createElement(
+        "div",
+        { className: "dshwb-actions" },
+        editingRoot && React2.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-secondary",
+            disabled: savingRoot,
+            onClick: () => {
+              setEditingRoot(false);
+              setSaveError(null);
+            }
+          },
+          tr("root.cancel", "取消")
+        ),
+        React2.createElement(
+          "button",
+          {
+            type: "button",
+            className: "dshwb-primary",
+            disabled: savingRoot,
+            onClick: () => void saveRoot()
+          },
+          savingRoot ? tr("root.saving", "校验中…") : tr("root.save", "保存并继续")
+        )
+      )
+    );
+  };
+  const renderList = (root, entries) => React2.createElement(
+    React2.Fragment,
+    null,
+    React2.createElement(
+      "div",
+      { className: "dshwb-root-bar" },
+      React2.createElement("span", { className: "dshwb-root-path", title: root }, root),
+      React2.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: () => setAttempt((value) => value + 1) },
+        tr("list.refresh", "刷新")
+      ),
+      React2.createElement(
+        "button",
+        { type: "button", className: "dshwb-link", onClick: () => startEditing(root) },
+        tr("root.change", "更换根目录")
+      )
+    ),
+    entries.length === 0 ? React2.createElement(
+      "div",
+      { className: "dshwb-card" },
+      React2.createElement("h2", { className: "dshwb-card-title" }, tr("list.empty.title", "还没有工作台")),
+      React2.createElement(
+        "p",
+        { className: "dshwb-card-sub" },
+        tr(
+          "list.empty.sub",
+          "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或稍后用「新建工作台」创建。"
+        )
+      )
+    ) : React2.createElement(
+      "ul",
+      { className: "dshwb-list" },
+      entries.map(
+        (entry) => React2.createElement(
+          "li",
+          { className: "dshwb-item", key: entry.id },
+          React2.createElement("span", { className: "dshwb-item-name" }, entry.name),
+          React2.createElement("span", { className: "dshwb-item-id" }, entry.id),
+          entry.status !== "ok" && React2.createElement(
+            "span",
+            { className: `dshwb-badge dshwb-badge-${entry.status}` },
+            tr(STATUS_KEYS[entry.status], entry.status)
+          )
+        )
+      )
+    )
+  );
+  let body;
+  if (state.phase === "loading") {
+    body = React2.createElement("p", { className: "dshwb-loading" }, tr("list.loading", "正在读取…"));
+  } else if (state.phase === "no-root") {
+    body = renderRootForm();
+  } else if (state.phase === "ready") {
+    body = editingRoot ? renderRootForm() : renderList(state.root, state.entries);
+  } else {
+    body = React2.createElement(
+      React2.Fragment,
+      null,
+      React2.createElement(
+        "div",
+        { className: "dshwb-card" },
+        React2.createElement("h2", { className: "dshwb-card-title" }, tr("error.title", "读取失败")),
+        React2.createElement("p", { className: "dshwb-card-sub" }, state.message),
+        React2.createElement(
+          "div",
+          { className: "dshwb-actions" },
+          React2.createElement(
+            "button",
+            { type: "button", className: "dshwb-secondary", onClick: () => setAttempt((value) => value + 1) },
+            tr("list.retry", "重试")
+          ),
+          React2.createElement(
+            "button",
+            { type: "button", className: "dshwb-secondary", onClick: () => startEditing("") },
+            tr("root.change", "更换根目录")
+          )
+        )
+      ),
+      editingRoot && renderRootForm()
+    );
+  }
+  return React2.createElement(
     "div",
     {
       style: {
@@ -557,50 +737,9 @@ function HelloPanel(props) {
         background: HERO_BASE
       }
     },
-    React3.createElement("style", {
-      dangerouslySetInnerHTML: { __html: PANEL_CSS }
-    }),
-    React3.createElement(HeroBackdrop),
-    React3.createElement(
-      "div",
-      { className: "dshwb-content" },
-      empty ? React3.createElement(
-        "div",
-        { className: "dshwb-stack" },
-        React3.createElement("p", { className: "dshwb-hint" }, tr("empty.hint", "还没有工作台")),
-        React3.createElement("p", { className: "dshwb-sub" }, tr("empty.sub", "创建你的第一个工作台，沉淀任务、资料与工作流。")),
-        React3.createElement(
-          "button",
-          {
-            type: "button",
-            ref: triggerRef,
-            className: "dshwb-primary",
-            onClick: openDialog
-          },
-          tr("empty.action", "创建工作台")
-        )
-      ) : React3.createElement(
-        "div",
-        { className: "dshwb-stack" },
-        React3.createElement("p", { className: "dshwb-hint" }, tr("created.hint", "当前工作台")),
-        React3.createElement("p", { className: "dshwb-created-name" }, workbench),
-        React3.createElement(
-          "button",
-          {
-            type: "button",
-            ref: triggerRef,
-            className: "dshwb-secondary",
-            onClick: openDialog
-          },
-          tr("created.action", "新建工作台")
-        )
-      )
-    ),
-    dialogOpen && React3.createElement(CreateWorkbenchDialog, {
-      translate: tr,
-      onClose: closeDialog,
-      onCreate: createWorkbench
-    })
+    React2.createElement("style", { dangerouslySetInnerHTML: { __html: PANEL_CSS } }),
+    React2.createElement(HeroBackdrop),
+    React2.createElement("div", { className: "dshwb-content" }, React2.createElement("div", { className: "dshwb-stack" }, body))
   );
 }
 
@@ -806,7 +945,26 @@ var zh = {
   "dialog.cancel": "取消",
   "dialog.create": "创建",
   "created.hint": "当前工作台",
-  "created.action": "新建工作台"
+  "created.action": "新建工作台",
+  "root.title": "设置工作台根目录",
+  "root.sub": "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。",
+  "root.label": "根目录路径",
+  "root.placeholder": "例如：D:\\work\\my-workbenches",
+  "root.save": "保存并继续",
+  "root.saving": "校验中…",
+  "root.needPath": "请先填写文件夹路径",
+  "root.change": "更换根目录",
+  "root.cancel": "取消",
+  "list.loading": "正在读取…",
+  "list.refresh": "刷新",
+  "list.retry": "重试",
+  "list.empty.title": "还没有工作台",
+  "list.empty.sub": "这个根目录里暂时没有工作台。可以让 AI 在根目录放一个 <id>/<id>.json，或稍后用「新建工作台」创建。",
+  "list.status.external": "外部新建",
+  "list.status.missing": "缺失",
+  "list.status.corrupt": "损坏",
+  "error.title": "读取失败",
+  "error.connection": "连接服务不可用，请稍后重试"
 };
 var en = {
   "menu.label": "Workbench",
@@ -820,18 +978,39 @@ var en = {
   "dialog.cancel": "Cancel",
   "dialog.create": "Create",
   "created.hint": "Current workbench",
-  "created.action": "New workbench"
+  "created.action": "New workbench",
+  "root.title": "Set the workbench root folder",
+  "root.sub": "The index and every workbench JSON will be written into this folder.",
+  "root.label": "Root folder path",
+  "root.placeholder": "e.g. D:\\work\\my-workbenches",
+  "root.save": "Save and continue",
+  "root.saving": "Checking…",
+  "root.needPath": "Enter a folder path first",
+  "root.change": "Change root",
+  "root.cancel": "Cancel",
+  "list.loading": "Loading…",
+  "list.refresh": "Refresh",
+  "list.retry": "Retry",
+  "list.empty.title": "No workbench yet",
+  "list.empty.sub": "This root has no workbench yet. Ask an AI to drop an <id>/<id>.json here, or create one later with “New workbench”.",
+  "list.status.external": "New on disk",
+  "list.status.missing": "Missing",
+  "list.status.corrupt": "Corrupt",
+  "error.title": "Could not load",
+  "error.connection": "The connection service is unavailable; try again shortly"
 };
 var name = "dsh-hello-word";
 var inject = ["slots", "locale", "layout"];
 function apply(ctx) {
   const t = ctx.locale.bind(NS);
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), "workbench: dictionaries");
+  const rpc = createWorkbenchClient(ctx);
+  const panel = (props) => React3.createElement(HelloPanel, { ...props, t: props.t ?? t, rpc });
   ctx.slots.inject(
     "main",
     () => ctx.slots.register(
       { name: "main", key: PANEL_ID, locale: NS },
-      HelloPanel
+      panel
     )
   );
   ctx.effect(() => mountHeaderButton(ctx, t), "workbench: sidebar header button");
