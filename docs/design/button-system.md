@@ -268,13 +268,25 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
   --dsw-alias-label-primary: var(--dsw-static-neutral-bluish-50);         /* #f9fafb */
   --dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-300);      /* #cfd3d6 */
   --dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-400);       /* #adb2b8 */
+  --dsw-alias-label-caption: var(--dsw-static-neutral-bluish-500);        /* #81858c */
+  --dsw-alias-border-l1: #ffffff0f;
+  --dsw-alias-border-l2: #ffffff1f;
   --dsw-alias-border-l3: #ffffff29;
+  --dsw-alias-border-l4: #ffffff33;
   --dsw-alias-interactive-bg-hover: #ffffff14;
   --dsw-alias-interactive-bg-active: #ffffff24;
   --dsw-alias-interactive-bg-hover-danger: #f25a5a26;
   --dsw-alias-state-error-primary: var(--dsw-static-red-400);             /* #f25a5a */
   --dsw-alias-state-error-secondary: var(--dsw-static-red-400);           /* #f25a5a */
   --dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);     /* #7aaaff */
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-400);            /* #f59e0b */
+  --dshwb-glass: rgba(9,15,26,.62);          /* 面板/卡片玻璃底 */
+  --dshwb-glass-strong: rgba(9,15,26,.82);   /* 抽屉 */
+  --dshwb-glass-opaque: rgba(9,15,26,.94);   /* 弹框 */
+  --dshwb-overlay: rgba(4,9,18,.6);          /* 遮罩 */
+  --dshwb-tint: #ffffff0d;                   /* 行卡片/输入框底 */
+  --dshwb-tint-strong: #ffffff17;            /* 静态行 hover 底 */
+  --dshwb-dot-idle: #ffffff47;               /* 空闲状态点 */
 }
 ```
 
@@ -515,7 +527,7 @@ html[data-input-modality=pointer] body :focus-visible:not(:read-write){--dsw-foc
 - 迁移文件：`workbench.ts`、`workbench-grid.ts`、`workbench-editor.ts`、`config-drawer.ts`、`renderers/harness.ts`，共 74 条规则改成 token / `color-mix`；面板文字、玻璃容器、行卡片、输入框、开关、状态徽标全部脱离字面量。
 - 去重：`.dshwb-workbench`（workbench.ts 保留）、`.dshwb-idrow/.dshwb-idvalue`（workbench.ts 保留）、`.dshwb-confirm-text`（workbench.ts 一份 canonical）。
 - 检查器：`check-design-tokens` 从"只查按钮规则"扩到**每条 class 规则**（含元素前缀与 island 后代），仅豁免 island 规则本身、`var()` fallback、阴影与渐变；`check-scripts.test.ts` 扩到 13 例。
-- 自动验证：`npm run check` → 18 个测试文件、169 个用例全绿；`design-tokens clean: 149 rule(s)`；`vocabulary clean: 38 file(s)`；`build` 产出 `client.js` 139,642 B / `index.js` 26,270 B。
+- 自动验证：`npm run check` → 18 个测试文件、170 个用例全绿；`design-tokens clean: 149 rule(s)`；`vocabulary clean: 38 file(s)`；`build` 产出 `client.js` 139,692 B / `index.js` 26,270 B。
 - 本轮仍待人工确认：重新激活插件后切 light/dark 主题，面板/抽屉/卡片/徽标文字与背景可读；本次没有浏览器截图，故只记录代码级验证。
 
 ## 6. 参考来源

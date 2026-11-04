@@ -14,6 +14,8 @@ export function attemptOpenSession(
   sessionId: string | null,
 ): boolean {
   if (shell === undefined || sessionId === null) return false;
+  // The shell contract returns a boolean, but a future carrier may throw; the
+  // callers only need "did it open", so one catch here keeps them simple.
   try {
     return shell.openSession(sessionId);
   } catch {

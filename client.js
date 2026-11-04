@@ -1058,7 +1058,7 @@ var DRAWER_CSS = `
 .dshwb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .dshwb-panel-list{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;padding:0;list-style:none}
 .dshwb-panel-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dshwb-tint)}
-.dshwb-panel-row-active{border-color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)}
+.dshwb-panel-row-active{border-color:var(--dsw-alias-border-l4);background:var(--dsw-alias-interactive-bg-hover)}
 .dshwb-panel-pick{display:flex;flex:1;min-width:0;align-items:center;gap:7px;padding:4px 5px;border:0;border-radius:6px;background:none;color:inherit;font-family:inherit;font-size:12px;text-align:left;cursor:pointer}
 .dshwb-panel-pick:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}
 .dshwb-panel-ordinal{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
@@ -1690,7 +1690,7 @@ var HARNESS_CSS = `
 .dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-harness-status{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:10.5px;line-height:1.7;white-space:nowrap}
 .dshwb-harness-running{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 20%, transparent);color:var(--dsw-alias-state-business-primary)}
-.dshwb-harness-idle{background:var(--dshwb-tint);color:var(--dsw-alias-label-secondary)}
+.dshwb-harness-idle{background:color-mix(in srgb, var(--dsw-alias-label-secondary) 8%, transparent);color:var(--dsw-alias-label-secondary)}
 .dshwb-harness-unknown{background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);color:var(--dsw-alias-state-warn-primary)}
 .dshwb-harness-id{margin:0;overflow:hidden;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-harness-hint{margin:0;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.6}
@@ -1868,7 +1868,7 @@ var GRID_CSS = `
 .dshwb-panel-title{margin:0;overflow:hidden;font-size:13px;font-weight:600;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-panel-sub{margin:2px 0 0;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-panel-actions{display:flex;flex:0 0 auto;align-items:center;gap:6px}
-.dshwb-panel-type{padding:2px 7px;border-radius:999px;background:var(--dshwb-tint);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.6;white-space:nowrap}
+.dshwb-panel-type{padding:2px 7px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-label-secondary) 8%, transparent);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.6;white-space:nowrap}
 .dshwb-panel-warn{padding:2px 7px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);color:var(--dsw-alias-state-warn-primary);font-size:10.5px;line-height:1.6;white-space:nowrap;cursor:help}
 .dshwb-panel-body{flex:1;min-height:0;overflow:auto;padding:11px 12px}
 .dshwb-reserved{display:flex;flex-direction:column;gap:6px}

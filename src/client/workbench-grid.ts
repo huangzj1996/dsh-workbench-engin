@@ -36,7 +36,7 @@ export const GRID_CSS = `
 .dshwb-panel-title{margin:0;overflow:hidden;font-size:13px;font-weight:600;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-panel-sub{margin:2px 0 0;overflow:hidden;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.45;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-panel-actions{display:flex;flex:0 0 auto;align-items:center;gap:6px}
-.dshwb-panel-type{padding:2px 7px;border-radius:999px;background:var(--dshwb-tint);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.6;white-space:nowrap}
+.dshwb-panel-type{padding:2px 7px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-label-secondary) 8%, transparent);color:var(--dsw-alias-label-secondary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.6;white-space:nowrap}
 .dshwb-panel-warn{padding:2px 7px;border-radius:999px;background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);color:var(--dsw-alias-state-warn-primary);font-size:10.5px;line-height:1.6;white-space:nowrap;cursor:help}
 .dshwb-panel-body{flex:1;min-height:0;overflow:auto;padding:11px 12px}
 .dshwb-reserved{display:flex;flex-direction:column;gap:6px}

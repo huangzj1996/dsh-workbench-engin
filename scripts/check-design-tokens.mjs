@@ -29,6 +29,10 @@ const BANNED_PROPERTIES = new Set([
   'border-bottom',
   'border-left',
   'border-color',
+  'border-top-color',
+  'border-right-color',
+  'border-bottom-color',
+  'border-left-color',
   'outline',
   'outline-color',
   'fill',
@@ -38,6 +42,7 @@ const BANNED_PROPERTIES = new Set([
 const FOREGROUND_PROPERTIES = new Set(['color', 'outline', 'outline-color', 'border', 'border-color']);
 const HEX_COLOUR = /#[0-9a-fA-F]{3,8}\b/g;
 const RGB_COLOUR = /\brgba?\([^)]*\)/g;
+const HSL_COLOUR = /\bhsla?\([^)]*\)/g;
 
 /** Every file under `dir` whose name matches the scan extensions. */
 async function sourceFiles(dir) {
@@ -109,6 +114,9 @@ for (const file of files) {
           report(`${property} 使用了字面量颜色 ${literal}`);
         }
         for (const literal of stripped.match(RGB_COLOUR) ?? []) {
+          report(`${property} 使用了字面量颜色 ${literal}`);
+        }
+        for (const literal of stripped.match(HSL_COLOUR) ?? []) {
           report(`${property} 使用了字面量颜色 ${literal}`);
         }
       }

@@ -29,7 +29,7 @@ export const HARNESS_CSS = `
 .dshwb-harness-title{flex:1;min-width:0;overflow:hidden;color:var(--dsw-alias-label-primary);font-size:13px;font-weight:600;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-harness-status{flex:0 0 auto;padding:1px 8px;border-radius:999px;font-size:10.5px;line-height:1.7;white-space:nowrap}
 .dshwb-harness-running{background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 20%, transparent);color:var(--dsw-alias-state-business-primary)}
-.dshwb-harness-idle{background:var(--dshwb-tint);color:var(--dsw-alias-label-secondary)}
+.dshwb-harness-idle{background:color-mix(in srgb, var(--dsw-alias-label-secondary) 8%, transparent);color:var(--dsw-alias-label-secondary)}
 .dshwb-harness-unknown{background:color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);color:var(--dsw-alias-state-warn-primary)}
 .dshwb-harness-id{margin:0;overflow:hidden;color:var(--dsw-alias-label-tertiary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px;line-height:1.5;white-space:nowrap;text-overflow:ellipsis}
 .dshwb-harness-hint{margin:0;color:var(--dsw-alias-label-secondary);font-size:11.5px;line-height:1.6}

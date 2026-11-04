@@ -184,6 +184,18 @@ describe('check-design-tokens', () => {
     expect(result.stdout).toContain('brightness');
   });
 
+  it('fails on hsl() literals too', async () => {
+    const root = await fixture({
+      'src/client/panel.ts':
+        'export const CSS = `.dshwb-item{background:hsl(210 40% 20%)}`;\n',
+    });
+
+    const result = await runCheck('check-design-tokens.mjs', root);
+
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain('hsl');
+  });
+
   it('passes on this repository, whose button rules are fully tokenised', async () => {
     const result = await runCheck('check-design-tokens.mjs', REPO_ROOT);
 

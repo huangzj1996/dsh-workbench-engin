@@ -60,7 +60,7 @@ export const DRAWER_CSS = `
 .dshwb-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .dshwb-panel-list{display:flex;flex-direction:column;gap:6px;margin:0 0 10px;padding:0;list-style:none}
 .dshwb-panel-row{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--dsw-alias-border-l1);border-radius:9px;background:var(--dshwb-tint)}
-.dshwb-panel-row-active{border-color:var(--dsw-alias-state-business-primary);background:color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent)}
+.dshwb-panel-row-active{border-color:var(--dsw-alias-border-l4);background:var(--dsw-alias-interactive-bg-hover)}
 .dshwb-panel-pick{display:flex;flex:1;min-width:0;align-items:center;gap:7px;padding:4px 5px;border:0;border-radius:6px;background:none;color:inherit;font-family:inherit;font-size:12px;text-align:left;cursor:pointer}
 .dshwb-panel-pick:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary));outline-offset:1px}
 .dshwb-panel-ordinal{flex:0 0 auto;color:var(--dsw-alias-state-business-primary);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:10.5px}
