@@ -7,6 +7,7 @@
  */
 import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import type { WorkbenchRpcMethod, WorkbenchRpcResult } from '../../shared/workbench/protocol';
+import { pickRootDirectory, type DirectoryPickerLookup } from './picker';
 import { createWorkbenchStore, type WorkbenchStoreOptions } from './store';
 
 /** The exact Fetch route the Host half registers on the `/api` carrier. */
@@ -16,6 +17,15 @@ export const WORKBENCH_RPC_PATH = '/api/workbench';
 export interface WorkbenchRpc {
   dispatch(request: unknown): Promise<WorkbenchRpcResult>;
   route(request: Request): Promise<Response>;
+}
+
+/** Store options plus the lazy directory-picker lookup the Host composes in. */
+export interface WorkbenchRpcOptions extends WorkbenchStoreOptions {
+  /**
+   * The shell's `directoryPicker` service, resolved per pick because it may be
+   * mounted after this plugin activates; absent means "no chooser here".
+   */
+  getDirectoryPicker?: DirectoryPickerLookup;
 }
 
 /** Read one field from a payload object without trusting its shape. */
@@ -37,8 +47,9 @@ function failure(error: unknown): WorkbenchRpcResult {
 }
 
 /** Create the RPC dispatcher bound to one DSH home. */
-export function createWorkbenchRpc(options: WorkbenchStoreOptions): WorkbenchRpc {
+export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
   const store = createWorkbenchStore(options);
+  const getDirectoryPicker = options.getDirectoryPicker ?? (() => undefined);
 
   /** The configured root, or `root-unset` when the pointer has not been written. */
   async function resolveRoot(): Promise<string> {
@@ -62,6 +73,8 @@ export function createWorkbenchRpc(options: WorkbenchStoreOptions): WorkbenchRpc
           return { ok: true, value: await store.getRootConfig() };
         case 'setRoot':
           return { ok: true, value: await store.setRoot(call.payload) };
+        case 'pickRoot':
+          return { ok: true, value: await pickRootDirectory(getDirectoryPicker) };
         case 'list':
           return { ok: true, value: await store.list(await resolveRoot()) };
         case 'read':

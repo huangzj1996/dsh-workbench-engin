@@ -7,6 +7,7 @@
  * deck plugin uses — and delegates every call to the workbench RPC dispatcher.
  */
 import { createWorkbenchRpc, WORKBENCH_RPC_PATH } from './workbench/rpc';
+import type { DirectoryPickerService } from './workbench/picker';
 import { resolveDshHome } from './workbench/store';
 
 /** The slice of the Host `connection` service this plugin registers on. */
@@ -22,12 +23,25 @@ interface FetchRegistry {
 /** The part of the Host context (cordis plugin ctx) this plugin uses. */
 export interface HostContext {
   get(service: 'connection'): { fetch?: FetchRegistry } | undefined;
+  get(service: 'directoryPicker'): DirectoryPickerService | undefined;
   inject?(services: string[], callback: () => void): void;
   effect?(setup: () => (() => void) | void, label?: string): void;
 }
 
 /** Host services this plugin needs before it can register its route. */
 export const inject = ['connection'];
+
+/**
+ * Resolve the shell's folder chooser at call time (not activation time): the
+ * picker may be mounted later, and a composition without one must still boot.
+ */
+function lookupDirectoryPicker(ctx: HostContext): DirectoryPickerService | undefined {
+  try {
+    return ctx.get('directoryPicker');
+  } catch {
+    return undefined;
+  }
+}
 
 /** Register the workbench RPC route once the connection service is ready. */
 export function apply(ctx: HostContext): void {
@@ -38,7 +52,10 @@ export function apply(ctx: HostContext): void {
     const registry = ctx.get('connection')?.fetch;
     if (registry === undefined || typeof registry.register !== 'function') return;
 
-    const rpc = createWorkbenchRpc({ dshHome: resolveDshHome(process.env) });
+    const rpc = createWorkbenchRpc({
+      dshHome: resolveDshHome(process.env),
+      getDirectoryPicker: () => lookupDirectoryPicker(ctx),
+    });
     try {
       const dispose = registry.register({
         path: WORKBENCH_RPC_PATH,

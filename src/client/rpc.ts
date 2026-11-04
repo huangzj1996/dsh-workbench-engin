@@ -7,6 +7,7 @@
  * stable `code` and its readable Chinese `message`.
  */
 import type {
+  PickRootResult,
   RootConfig,
   WorkbenchList,
   WorkbenchRpcMethod,
@@ -49,10 +50,11 @@ export interface ClientRpcContext {
   inject?(services: string[], callback: () => void): void;
 }
 
-/** The six workbench calls, typed for the panel UI. */
+/** The seven workbench calls, typed for the panel UI. */
 export interface WorkbenchClient {
   getRootConfig(): Promise<RootConfig>;
   setRoot(root: string): Promise<{ root: string }>;
+  pickRoot(): Promise<PickRootResult>;
   list(): Promise<WorkbenchList>;
   read(id: string): Promise<{ scene: WorkbenchScene }>;
   save(scene: WorkbenchScene): Promise<{ scene: WorkbenchScene }>;
@@ -112,6 +114,7 @@ export function createWorkbenchClient(ctx: ClientRpcContext): WorkbenchClient {
   return {
     getRootConfig: () => call<RootConfig>('getRootConfig', {}),
     setRoot: (root) => call<{ root: string }>('setRoot', { root }),
+    pickRoot: () => call<PickRootResult>('pickRoot', {}),
     list: () => call<WorkbenchList>('list', {}),
     read: (id) => call<{ scene: WorkbenchScene }>('read', { id }),
     save: (scene) => call<{ scene: WorkbenchScene }>('save', { scene }),

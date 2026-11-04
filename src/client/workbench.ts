@@ -17,6 +17,7 @@ import * as React from 'react';
 
 import { CreateWorkbenchDialog } from './create-workbench-dialog';
 import { HeroBackdrop, HERO_BASE } from './hero-backdrop';
+import { requestRootPick, type RootPickFallbackReason } from './root-picker';
 import { WorkbenchRpcError, type WorkbenchClient } from './rpc';
 import { SceneEditor } from './scene-editor';
 import type { SessionShell } from './session-shell';
@@ -52,6 +53,9 @@ const PANEL_CSS = `
 .dshwb-card-title{margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.4}
 .dshwb-card-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
 .dshwb-label{display:block;margin:0 0 6px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-pickrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
+.dshwb-picksep{color:rgba(226,234,248,.45);font-size:11.5px;line-height:1.5}
+.dshwb-notice{margin:8px 0 0;color:#ffd88e;font-size:12px;line-height:1.6}
 .dshwb-input{box-sizing:border-box;width:100%;padding:9px 10px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
 .dshwb-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dshwb-input::placeholder{color:rgba(226,234,248,.4)}
@@ -153,6 +157,10 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const [editingRoot, setEditingRoot] = React.useState(false);
   const [pathDraft, setPathDraft] = React.useState('');
   const [savingRoot, setSavingRoot] = React.useState(false);
+  /** True while the shell's folder chooser is being opened (host-side dialog). */
+  const [picking, setPicking] = React.useState(false);
+  /** Why the chooser could not be offered; keeps the manual form, no blocking error. */
+  const [pickFallback, setPickFallback] = React.useState<RootPickFallbackReason | null>(null);
   const [saveError, setSaveError] = React.useState<string | null>(null);
   const [view, setView] = React.useState<PanelView>({ kind: 'list' });
   const [creating, setCreating] = React.useState(false);
@@ -302,12 +310,18 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
   const startEditing = (prefill: string): void => {
     setPathDraft(prefill);
     setSaveError(null);
+    setPickFallback(null);
     setEditingRoot(true);
   };
 
-  const saveRoot = async (): Promise<void> => {
+  /**
+   * Persist one root path. Both entry paths — the shell's folder chooser and
+   * the manual input — land here, so they share the same validation, pointer
+   * write and reload of the list.
+   */
+  const saveRoot = async (pathInput?: string): Promise<void> => {
     if (rpc === undefined) return;
-    const path = pathDraft.trim();
+    const path = (pathInput ?? pathDraft).trim();
     if (path === '') {
       setSaveError(tr('root.needPath', '请先填写文件夹路径'));
       return;
@@ -318,17 +332,41 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
       await rpc.setRoot(path);
       setEditingRoot(false);
       setPathDraft('');
+      setPickFallback(null);
       setAttempt((value) => value + 1);
     } catch (error) {
-      setSaveError(
-        error instanceof WorkbenchRpcError ? error.message : error instanceof Error ? error.message : String(error),
-      );
+      setSaveError(readableError(error));
     } finally {
       setSavingRoot(false);
     }
   };
 
+  /**
+   * Prefer the shell's native folder chooser; on cancel do nothing, and when
+   * the shell cannot offer one fall back to the manual input with a note.
+   */
+  const chooseRoot = async (): Promise<void> => {
+    if (rpc === undefined) return;
+    setPicking(true);
+    setPickFallback(null);
+    setSaveError(null);
+    try {
+      const outcome = await requestRootPick(rpc);
+      if (outcome.kind === 'picked') {
+        setPathDraft(outcome.path);
+        await saveRoot(outcome.path);
+      } else if (outcome.kind === 'fallback') {
+        setPickFallback(outcome.reason);
+      }
+    } finally {
+      setPicking(false);
+    }
+  };
+
   const renderRootForm = (): React.ReactElement => {
+    const busy = savingRoot || picking;
+    /** Emphasize whichever path the user is already taking. */
+    const typedPath = pathDraft.trim() !== '';
     return React.createElement(
       'div',
       { className: 'dshwb-card' },
@@ -337,6 +375,27 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         'p',
         { className: 'dshwb-card-sub' },
         tr('root.sub', '工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。'),
+      ),
+      // Prefer the shell's OS folder chooser; the manual input below is the
+      // fallback (always present, so a failed chooser never blocks the setup).
+      React.createElement(
+        'div',
+        { className: 'dshwb-pickrow' },
+        React.createElement(
+          'button',
+          {
+            type: 'button',
+            className: typedPath ? 'dshwb-secondary' : 'dshwb-primary',
+            disabled: busy,
+            onClick: () => void chooseRoot(),
+          },
+          picking ? tr('root.picking', '正在打开选择框…') : tr('root.pick', '选择文件夹…'),
+        ),
+        React.createElement(
+          'span',
+          { className: 'dshwb-picksep' },
+          tr('root.pick.or', '或手动填写路径'),
+        ),
       ),
       React.createElement(
         'label',
@@ -351,7 +410,7 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
         placeholder: tr('root.placeholder', '例如：D:\\work\\my-workbenches'),
         autoComplete: 'off',
         spellCheck: false,
-        disabled: savingRoot,
+        disabled: busy,
         onChange: (event: React.ChangeEvent<HTMLInputElement>) => setPathDraft(event.target.value),
         onKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => {
           if (event.key !== 'Enter') return;
@@ -359,6 +418,14 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
           void saveRoot();
         },
       }),
+      pickFallback !== null &&
+        React.createElement(
+          'p',
+          { className: 'dshwb-notice', role: 'status' },
+          pickFallback === 'picker-unavailable'
+            ? tr('root.pick.unavailable', '系统文件夹选择框不可用，请直接填写下面的路径。')
+            : tr('root.pick.failed', '系统文件夹选择框打不开，请直接填写下面的路径。'),
+        ),
       saveError !== null && React.createElement('p', { className: 'dshwb-error', role: 'alert' }, saveError),
       React.createElement(
         'div',
@@ -369,10 +436,11 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
             {
               type: 'button',
               className: 'dshwb-secondary',
-              disabled: savingRoot,
+              disabled: busy,
               onClick: () => {
                 setEditingRoot(false);
                 setSaveError(null);
+                setPickFallback(null);
               },
             },
             tr('root.cancel', '取消'),
@@ -381,8 +449,8 @@ export function HelloPanel(props: HelloPanelProps): React.ReactElement {
           'button',
           {
             type: 'button',
-            className: 'dshwb-primary',
-            disabled: savingRoot,
+            className: typedPath ? 'dshwb-primary' : 'dshwb-secondary',
+            disabled: busy,
             onClick: () => void saveRoot(),
           },
           savingRoot ? tr('root.saving', '校验中…') : tr('root.save', '保存并继续'),

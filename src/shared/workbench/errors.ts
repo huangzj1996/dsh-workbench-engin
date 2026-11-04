@@ -15,6 +15,10 @@ export type WorkbenchErrorCode =
   | 'file-corrupt'
   | 'not-found'
   | 'too-large'
+  /** The shell offers no native folder chooser; the manual path form is the fallback. */
+  | 'picker-unavailable'
+  /** The shell's folder chooser was offered but opening it failed. */
+  | 'picker-failed'
   /** Last-resort code for unexpected failures and unknown RPC methods. */
   | 'internal';
 
@@ -28,6 +32,8 @@ const BASE_MESSAGE: Record<WorkbenchErrorCode, string> = {
   'file-corrupt': '文件损坏',
   'not-found': '未找到该工作台',
   'too-large': '文件超过 256KB 上限',
+  'picker-unavailable': '系统文件夹选择框不可用，请手动填写路径',
+  'picker-failed': '系统文件夹选择框调用失败，请手动填写路径',
   internal: '操作失败',
 };
 

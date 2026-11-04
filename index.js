@@ -9,6 +9,8 @@ var BASE_MESSAGE = {
   "file-corrupt": "\u6587\u4EF6\u635F\u574F",
   "not-found": "\u672A\u627E\u5230\u8BE5\u5DE5\u4F5C\u53F0",
   "too-large": "\u6587\u4EF6\u8D85\u8FC7 256KB \u4E0A\u9650",
+  "picker-unavailable": "\u7CFB\u7EDF\u6587\u4EF6\u5939\u9009\u62E9\u6846\u4E0D\u53EF\u7528\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8DEF\u5F84",
+  "picker-failed": "\u7CFB\u7EDF\u6587\u4EF6\u5939\u9009\u62E9\u6846\u8C03\u7528\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8DEF\u5F84",
   internal: "\u64CD\u4F5C\u5931\u8D25"
 };
 var WorkbenchStoreError = class extends Error {
@@ -82,6 +84,39 @@ function parseWorkbench(text) {
 function serializeWorkbench(scene) {
   return `${JSON.stringify(scene, null, 2)}
 `;
+}
+
+// src/host/workbench/picker.ts
+function isNative(capability) {
+  return capability.kind === "native" && typeof capability.pick === "function";
+}
+function planRootPick(capability) {
+  return capability !== void 0 && isNative(capability) ? { kind: "native" } : { kind: "unavailable" };
+}
+function describe(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+async function pickRootDirectory(lookup) {
+  let capability;
+  try {
+    capability = lookup()?.capability();
+  } catch {
+    capability = void 0;
+  }
+  const plan = planRootPick(capability);
+  if (plan.kind !== "native" || capability === void 0) {
+    throw new WorkbenchStoreError("picker-unavailable");
+  }
+  try {
+    const picked = await capability.pick(new AbortController().signal);
+    if (picked === null) return { path: null };
+    if (typeof picked !== "string" || picked.trim() === "") {
+      throw new Error("\u9009\u62E9\u6846\u6CA1\u6709\u8FD4\u56DE\u6587\u4EF6\u5939\u8DEF\u5F84");
+    }
+    return { path: picked.trim() };
+  } catch (error) {
+    throw new WorkbenchStoreError("picker-failed", describe(error));
+  }
 }
 
 // src/host/workbench/store.ts
@@ -165,7 +200,7 @@ async function atomicWrite(fs, file, data) {
     throw error;
   }
 }
-function describe(error) {
+function describe2(error) {
   return error instanceof Error ? error.message : String(error);
 }
 function isNotFound(error) {
@@ -187,13 +222,13 @@ async function readIndex(fs, root) {
     if (isNotFound(error)) {
       return { data: { version: INDEX_VERSION, workbenches: [] }, created: true };
     }
-    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u65E0\u6CD5\u8BFB\u53D6\uFF1A${describe(error)}`);
+    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u65E0\u6CD5\u8BFB\u53D6\uFF1A${describe2(error)}`);
   }
   let raw;
   try {
     raw = JSON.parse(text);
   } catch (error) {
-    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${describe(error)}`);
+    throw new WorkbenchStoreError("file-corrupt", `\u7D22\u5F15\u6587\u4EF6\u4E0D\u662F\u5408\u6CD5 JSON\uFF1A${describe2(error)}`);
   }
   const workbenches = typeof raw === "object" && raw !== null ? raw["workbenches"] : void 0;
   const valid = Array.isArray(workbenches) && workbenches.every((entry) => {
@@ -215,7 +250,7 @@ async function writeIndex(fs, root, data) {
     await atomicWrite(fs, path.join(root, INDEX_FILE), `${JSON.stringify(next, null, 2)}
 `);
   } catch (error) {
-    throw new WorkbenchStoreError("write-failed", describe(error));
+    throw new WorkbenchStoreError("write-failed", describe2(error));
   }
 }
 async function scanWorkbenchIds(fs, root) {
@@ -223,7 +258,7 @@ async function scanWorkbenchIds(fs, root) {
   try {
     entries = await fs.readdir(root);
   } catch (error) {
-    throw new WorkbenchStoreError("root-unreachable", `\u65E0\u6CD5\u8BFB\u53D6\u6839\u76EE\u5F55\uFF1A${root}\uFF08${describe(error)}\uFF09`);
+    throw new WorkbenchStoreError("root-unreachable", `\u65E0\u6CD5\u8BFB\u53D6\u6839\u76EE\u5F55\uFF1A${root}\uFF08${describe2(error)}\uFF09`);
   }
   const ids = [];
   for (const entry of entries) {
@@ -250,13 +285,13 @@ async function ensureContextCard(fs, root, scene) {
     return;
   } catch (error) {
     if (!isNotFound(error)) {
-      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6\u5B9A\u4F4D\u5361\uFF1A${describe(error)}`);
+      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6\u5B9A\u4F4D\u5361\uFF1A${describe2(error)}`);
     }
   }
   try {
     await fs.writeFile(file, contextCardMarkdown(scene), "utf8");
   } catch (error) {
-    throw new WorkbenchStoreError("write-failed", describe(error));
+    throw new WorkbenchStoreError("write-failed", describe2(error));
   }
 }
 function assertWorkbenchId(value) {
@@ -278,7 +313,7 @@ async function assertWritable(fs, root) {
   try {
     await fs.writeFile(probe, "", "utf8");
   } catch (error) {
-    throw new WorkbenchStoreError("root-unreachable", describe(error));
+    throw new WorkbenchStoreError("root-unreachable", describe2(error));
   } finally {
     await fs.rm(probe, { force: true }).catch(() => void 0);
   }
@@ -316,14 +351,14 @@ function createWorkbenchStore(options) {
       const stats = await fs.stat(root);
       if (!stats.isDirectory()) throw new Error("\u4E0D\u662F\u6587\u4EF6\u5939");
     } catch (error) {
-      throw new WorkbenchStoreError("root-unreachable", `\u8DEF\u5F84\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u6587\u4EF6\u5939\uFF1A${root}\uFF08${describe(error)}\uFF09`);
+      throw new WorkbenchStoreError("root-unreachable", `\u8DEF\u5F84\u4E0D\u5B58\u5728\u6216\u4E0D\u662F\u6587\u4EF6\u5939\uFF1A${root}\uFF08${describe2(error)}\uFF09`);
     }
     await assertWritable(fs, root);
     try {
       await atomicWrite(fs, configFile, `${JSON.stringify({ root }, null, 2)}
 `);
     } catch (error) {
-      throw new WorkbenchStoreError("write-failed", describe(error));
+      throw new WorkbenchStoreError("write-failed", describe2(error));
     }
     return { root };
   }
@@ -378,7 +413,7 @@ function createWorkbenchStore(options) {
       text = await fs.readFile(file, "utf8");
     } catch (error) {
       if (isNotFound(error)) throw new WorkbenchStoreError("not-found", `\u5DE5\u4F5C\u53F0 ${id}`);
-      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6 ${id}/${id}.json\uFF1A${describe(error)}`);
+      throw new WorkbenchStoreError("file-corrupt", `\u65E0\u6CD5\u8BFB\u53D6 ${id}/${id}.json\uFF1A${describe2(error)}`);
     }
     if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
       throw new WorkbenchStoreError("too-large", `${id}/${id}.json`);
@@ -388,7 +423,7 @@ function createWorkbenchStore(options) {
       scene = parseWorkbench(text);
     } catch (error) {
       if (error instanceof WorkbenchStoreError) throw error;
-      throw new WorkbenchStoreError("file-corrupt", describe(error));
+      throw new WorkbenchStoreError("file-corrupt", describe2(error));
     }
     adoptedByRoot.get(root)?.delete(id);
     return { scene };
@@ -406,7 +441,7 @@ function createWorkbenchStore(options) {
     try {
       await atomicWrite(fs, path.join(root, id, `${id}.json`), text);
     } catch (error) {
-      throw new WorkbenchStoreError("write-failed", describe(error));
+      throw new WorkbenchStoreError("write-failed", describe2(error));
     }
     await ensureContextCard(fs, root, scene);
     const { data: index } = await readIndex(fs, root);
@@ -435,7 +470,7 @@ function createWorkbenchStore(options) {
       try {
         await fs.rm(dir, { recursive: true, force: true });
       } catch (error) {
-        throw new WorkbenchStoreError("write-failed", describe(error));
+        throw new WorkbenchStoreError("write-failed", describe2(error));
       }
     }
     if (hadEntry) {
@@ -464,6 +499,7 @@ function failure(error) {
 }
 function createWorkbenchRpc(options) {
   const store = createWorkbenchStore(options);
+  const getDirectoryPicker = options.getDirectoryPicker ?? (() => void 0);
   async function resolveRoot() {
     const config = await store.getRootConfig();
     if (config.root === null) throw new WorkbenchStoreError("root-unset");
@@ -480,6 +516,8 @@ function createWorkbenchRpc(options) {
           return { ok: true, value: await store.getRootConfig() };
         case "setRoot":
           return { ok: true, value: await store.setRoot(call.payload) };
+        case "pickRoot":
+          return { ok: true, value: await pickRootDirectory(getDirectoryPicker) };
         case "list":
           return { ok: true, value: await store.list(await resolveRoot()) };
         case "read":
@@ -514,13 +552,23 @@ function createWorkbenchRpc(options) {
 
 // src/host/index.ts
 var inject = ["connection"];
+function lookupDirectoryPicker(ctx) {
+  try {
+    return ctx.get("directoryPicker");
+  } catch {
+    return void 0;
+  }
+}
 function apply(ctx) {
   let registered = false;
   const register = () => {
     if (registered) return;
     const registry = ctx.get("connection")?.fetch;
     if (registry === void 0 || typeof registry.register !== "function") return;
-    const rpc = createWorkbenchRpc({ dshHome: resolveDshHome(process.env) });
+    const rpc = createWorkbenchRpc({
+      dshHome: resolveDshHome(process.env),
+      getDirectoryPicker: () => lookupDirectoryPicker(ctx)
+    });
     try {
       const dispose = registry.register({
         path: WORKBENCH_RPC_PATH,

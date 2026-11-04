@@ -6,10 +6,11 @@
  */
 import type { WorkbenchScene } from './schema';
 
-/** The six methods the Host route accepts. */
+/** The seven methods the Host route accepts. */
 export type WorkbenchRpcMethod =
   | 'getRootConfig'
   | 'setRoot'
+  | 'pickRoot'
   | 'list'
   | 'read'
   | 'save'
@@ -18,6 +19,14 @@ export type WorkbenchRpcMethod =
 /** The pointer file content: which folder is the workbench root. */
 export interface RootConfig {
   root: string | null;
+}
+
+/**
+ * The `pickRoot` reply: the absolute folder the shell's chooser returned, or
+ * `null` when the operator cancelled — a cancel is an outcome, not an error.
+ */
+export interface PickRootResult {
+  path: string | null;
 }
 
 /** One workbench as the list RPC reports it. */
@@ -48,6 +57,7 @@ export type WorkbenchRpcResult =
 export interface WorkbenchRpcValues {
   getRootConfig: RootConfig;
   setRoot: { root: string };
+  pickRoot: PickRootResult;
   list: WorkbenchList;
   read: { scene: WorkbenchScene };
   save: { scene: WorkbenchScene };

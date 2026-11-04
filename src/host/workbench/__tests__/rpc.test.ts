@@ -195,3 +195,129 @@ describe('workbench RPC', () => {
     expect(methodNotAllowed.status).toBe(405);
   });
 });
+
+/** A fake `ctx.directoryPicker` exposing the native (OS chooser) capability. */
+function nativePicker(pick: (signal: AbortSignal) => Promise<string | null>): {
+  capability: () => { kind: 'native'; pick: (signal: AbortSignal) => Promise<string | null> };
+} {
+  return { capability: () => ({ kind: 'native', pick }) };
+}
+
+describe('root picker RPC', () => {
+  it('asks the native chooser and returns the absolute path it picked', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const picked = await tempDir('picked-root');
+    let handed: AbortSignal | undefined;
+    const rpc = createWorkbenchRpc({
+      dshHome,
+      getDirectoryPicker: () =>
+        nativePicker(async (signal) => {
+          handed = signal;
+          return picked;
+        }),
+    });
+
+    const result = await rpc.dispatch({ method: 'pickRoot', payload: {} });
+
+    expect(result).toEqual({ ok: true, value: { path: picked } });
+    expect(handed).toBeInstanceOf(AbortSignal);
+  });
+
+  it('treats a cancelled chooser as an outcome and leaves the root pointer alone', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const root = await tempDir('workbenches');
+    const rpc = createWorkbenchRpc({
+      dshHome,
+      getDirectoryPicker: () => nativePicker(async () => null),
+    });
+    await rpc.dispatch({ method: 'setRoot', payload: { root } });
+
+    await expect(rpc.dispatch({ method: 'pickRoot', payload: {} })).resolves.toEqual({
+      ok: true,
+      value: { path: null },
+    });
+    await expect(rpc.dispatch({ method: 'getRootConfig' })).resolves.toEqual({
+      ok: true,
+      value: { root },
+    });
+  });
+
+  it('reports picker-unavailable when the shell has no chooser, pointing at the manual form', async () => {
+    const rpc = createWorkbenchRpc({ dshHome: await tempDir('dsh-home') });
+
+    const missing = await rpc.dispatch({ method: 'pickRoot', payload: {} });
+    expect(missing).toMatchObject({ ok: false, error: { code: 'picker-unavailable' } });
+    if (!missing.ok) expect(missing.error.message).toContain('请手动填写路径');
+
+    const browseOnly = createWorkbenchRpc({
+      dshHome: await tempDir('dsh-home'),
+      getDirectoryPicker: () => ({
+        capability: () => ({
+          kind: 'browse',
+          list: async () => ({ entries: [] }),
+          createDirectory: async () => '/tmp/new',
+        }),
+      }),
+    });
+    await expect(browseOnly.dispatch({ method: 'pickRoot', payload: {} })).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'picker-unavailable' },
+    });
+  });
+
+  it('reports picker-failed with a readable reason when the chooser throws', async () => {
+    const rpc = createWorkbenchRpc({
+      dshHome: await tempDir('dsh-home'),
+      getDirectoryPicker: () =>
+        nativePicker(async () => {
+          throw new Error('dialog worker exited');
+        }),
+    });
+
+    const result = await rpc.dispatch({ method: 'pickRoot', payload: {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'picker-failed' } });
+    if (!result.ok) {
+      expect(result.error.message).toContain('系统文件夹选择框调用失败');
+      expect(result.error.message).toContain('dialog worker exited');
+    }
+  });
+
+  it('feeds the picked folder through the same setRoot flow and only moves the pointer', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const oldRoot = await tempDir('workbenches-old');
+    const newRoot = await tempDir('workbenches-new');
+    const rpc = createWorkbenchRpc({
+      dshHome,
+      getDirectoryPicker: () => nativePicker(async () => newRoot),
+    });
+    await rpc.dispatch({ method: 'setRoot', payload: { root: oldRoot } });
+    await rpc.dispatch({
+      method: 'save',
+      payload: { scene: { id: 'kept', name: 'Kept', panels: [] } },
+    });
+
+    const picked = await rpc.dispatch({ method: 'pickRoot', payload: {} });
+    expect(picked).toEqual({ ok: true, value: { path: newRoot } });
+    if (!picked.ok) return;
+    const { path: pickedPath } = picked.value as { path: string };
+
+    // The Client hands the picked path to the very same `setRoot` RPC.
+    await expect(rpc.dispatch({ method: 'setRoot', payload: { root: pickedPath } })).resolves.toEqual({
+      ok: true,
+      value: { root: newRoot },
+    });
+    await expect(rpc.dispatch({ method: 'getRootConfig' })).resolves.toEqual({
+      ok: true,
+      value: { root: newRoot },
+    });
+    await expect(rpc.dispatch({ method: 'list' })).resolves.toEqual({
+      ok: true,
+      value: { root: newRoot, entries: [] },
+    });
+    // The old root keeps its index and workbench files untouched.
+    const oldIndex = JSON.parse(await readFile(path.join(oldRoot, 'index.json'), 'utf8'));
+    expect(oldIndex.workbenches).toEqual([{ id: 'kept', order: 1 }]);
+    await expect(readFile(path.join(oldRoot, 'kept', 'kept.json'), 'utf8')).resolves.toContain('"name": "Kept"');
+  });
+});

@@ -102,6 +102,7 @@ function createWorkbenchClient(ctx) {
   return {
     getRootConfig: () => call("getRootConfig", {}),
     setRoot: (root) => call("setRoot", { root }),
+    pickRoot: () => call("pickRoot", {}),
     list: () => call("list", {}),
     read: (id) => call("read", { id }),
     save: (scene) => call("save", { scene }),
@@ -854,6 +855,21 @@ function HeroBackdrop() {
       }
     })
   );
+}
+
+// src/client/root-picker.ts
+async function requestRootPick(client) {
+  let reply;
+  try {
+    reply = await client.pickRoot();
+  } catch (error) {
+    const unavailable = error instanceof WorkbenchRpcError && error.code === "picker-unavailable";
+    return { kind: "fallback", reason: unavailable ? "picker-unavailable" : "picker-failed" };
+  }
+  if (reply !== null && typeof reply === "object" && reply.path === null) return { kind: "cancelled" };
+  const path = reply !== null && typeof reply === "object" ? reply.path : void 0;
+  if (typeof path === "string" && path.trim() !== "") return { kind: "picked", path };
+  return { kind: "fallback", reason: "picker-failed" };
 }
 
 // src/client/scene-editor.ts
@@ -2316,6 +2332,9 @@ var PANEL_CSS = `
 .dshwb-card-title{margin:0 0 6px;font-size:15px;font-weight:600;line-height:1.4}
 .dshwb-card-sub{margin:0 0 14px;color:rgba(226,234,248,.62);font-size:12.5px;line-height:1.6}
 .dshwb-label{display:block;margin:0 0 6px;color:rgba(226,234,248,.68);font-size:12px}
+.dshwb-pickrow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:0 0 14px}
+.dshwb-picksep{color:rgba(226,234,248,.45);font-size:11.5px;line-height:1.5}
+.dshwb-notice{margin:8px 0 0;color:#ffd88e;font-size:12px;line-height:1.6}
 .dshwb-input{box-sizing:border-box;width:100%;padding:9px 10px;border:1px solid rgba(255,255,255,.18);border-radius:9px;background:rgba(255,255,255,.06);color:#eef3fb;font-family:inherit;font-size:13px;line-height:1.4;outline:none;transition:border-color .15s ease}
 .dshwb-input:focus{border-color:var(--dsw-alias-brand-primary)}
 .dshwb-input::placeholder{color:rgba(226,234,248,.4)}
@@ -2388,6 +2407,8 @@ function HelloPanel(props) {
   const [editingRoot, setEditingRoot] = React11.useState(false);
   const [pathDraft, setPathDraft] = React11.useState("");
   const [savingRoot, setSavingRoot] = React11.useState(false);
+  const [picking, setPicking] = React11.useState(false);
+  const [pickFallback, setPickFallback] = React11.useState(null);
   const [saveError, setSaveError] = React11.useState(null);
   const [view, setView] = React11.useState({ kind: "list" });
   const [creating, setCreating] = React11.useState(false);
@@ -2508,11 +2529,12 @@ function HelloPanel(props) {
   const startEditing = (prefill) => {
     setPathDraft(prefill);
     setSaveError(null);
+    setPickFallback(null);
     setEditingRoot(true);
   };
-  const saveRoot = async () => {
+  const saveRoot = async (pathInput) => {
     if (rpc === void 0) return;
-    const path = pathDraft.trim();
+    const path = (pathInput ?? pathDraft).trim();
     if (path === "") {
       setSaveError(tr("root.needPath", "请先填写文件夹路径"));
       return;
@@ -2523,16 +2545,34 @@ function HelloPanel(props) {
       await rpc.setRoot(path);
       setEditingRoot(false);
       setPathDraft("");
+      setPickFallback(null);
       setAttempt((value) => value + 1);
     } catch (error) {
-      setSaveError(
-        error instanceof WorkbenchRpcError ? error.message : error instanceof Error ? error.message : String(error)
-      );
+      setSaveError(readableError2(error));
     } finally {
       setSavingRoot(false);
     }
   };
+  const chooseRoot = async () => {
+    if (rpc === void 0) return;
+    setPicking(true);
+    setPickFallback(null);
+    setSaveError(null);
+    try {
+      const outcome = await requestRootPick(rpc);
+      if (outcome.kind === "picked") {
+        setPathDraft(outcome.path);
+        await saveRoot(outcome.path);
+      } else if (outcome.kind === "fallback") {
+        setPickFallback(outcome.reason);
+      }
+    } finally {
+      setPicking(false);
+    }
+  };
   const renderRootForm = () => {
+    const busy = savingRoot || picking;
+    const typedPath = pathDraft.trim() !== "";
     return React11.createElement(
       "div",
       { className: "dshwb-card" },
@@ -2541,6 +2581,27 @@ function HelloPanel(props) {
         "p",
         { className: "dshwb-card-sub" },
         tr("root.sub", "工作台的索引与每个工作台的 JSON 都会写在这个文件夹里。")
+      ),
+      // Prefer the shell's OS folder chooser; the manual input below is the
+      // fallback (always present, so a failed chooser never blocks the setup).
+      React11.createElement(
+        "div",
+        { className: "dshwb-pickrow" },
+        React11.createElement(
+          "button",
+          {
+            type: "button",
+            className: typedPath ? "dshwb-secondary" : "dshwb-primary",
+            disabled: busy,
+            onClick: () => void chooseRoot()
+          },
+          picking ? tr("root.picking", "正在打开选择框…") : tr("root.pick", "选择文件夹…")
+        ),
+        React11.createElement(
+          "span",
+          { className: "dshwb-picksep" },
+          tr("root.pick.or", "或手动填写路径")
+        )
       ),
       React11.createElement(
         "label",
@@ -2555,7 +2616,7 @@ function HelloPanel(props) {
         placeholder: tr("root.placeholder", "例如：D:\\work\\my-workbenches"),
         autoComplete: "off",
         spellCheck: false,
-        disabled: savingRoot,
+        disabled: busy,
         onChange: (event) => setPathDraft(event.target.value),
         onKeyDown: (event) => {
           if (event.key !== "Enter") return;
@@ -2563,6 +2624,11 @@ function HelloPanel(props) {
           void saveRoot();
         }
       }),
+      pickFallback !== null && React11.createElement(
+        "p",
+        { className: "dshwb-notice", role: "status" },
+        pickFallback === "picker-unavailable" ? tr("root.pick.unavailable", "系统文件夹选择框不可用，请直接填写下面的路径。") : tr("root.pick.failed", "系统文件夹选择框打不开，请直接填写下面的路径。")
+      ),
       saveError !== null && React11.createElement("p", { className: "dshwb-error", role: "alert" }, saveError),
       React11.createElement(
         "div",
@@ -2572,10 +2638,11 @@ function HelloPanel(props) {
           {
             type: "button",
             className: "dshwb-secondary",
-            disabled: savingRoot,
+            disabled: busy,
             onClick: () => {
               setEditingRoot(false);
               setSaveError(null);
+              setPickFallback(null);
             }
           },
           tr("root.cancel", "取消")
@@ -2584,8 +2651,8 @@ function HelloPanel(props) {
           "button",
           {
             type: "button",
-            className: "dshwb-primary",
-            disabled: savingRoot,
+            className: typedPath ? "dshwb-primary" : "dshwb-secondary",
+            disabled: busy,
             onClick: () => void saveRoot()
           },
           savingRoot ? tr("root.saving", "校验中…") : tr("root.save", "保存并继续")
@@ -3022,6 +3089,11 @@ var zh = {
   "root.placeholder": "例如：D:\\work\\my-workbenches",
   "root.save": "保存并继续",
   "root.saving": "校验中…",
+  "root.pick": "选择文件夹…",
+  "root.picking": "正在打开选择框…",
+  "root.pick.or": "或手动填写路径",
+  "root.pick.unavailable": "系统文件夹选择框不可用，请直接填写下面的路径。",
+  "root.pick.failed": "系统文件夹选择框打不开，请直接填写下面的路径。",
   "root.needPath": "请先填写文件夹路径",
   "root.change": "更换根目录",
   "root.cancel": "取消",
@@ -3150,6 +3222,11 @@ var en = {
   "root.placeholder": "e.g. D:\\work\\my-workbenches",
   "root.save": "Save and continue",
   "root.saving": "Checking…",
+  "root.pick": "Choose folder…",
+  "root.picking": "Opening chooser…",
+  "root.pick.or": "Or type the path manually",
+  "root.pick.unavailable": "The system folder dialog is unavailable — type the path below instead.",
+  "root.pick.failed": "The system folder dialog could not open — type the path below instead.",
   "root.needPath": "Enter a folder path first",
   "root.change": "Change root",
   "root.cancel": "Cancel",
