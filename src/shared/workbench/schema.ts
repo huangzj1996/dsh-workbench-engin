@@ -13,6 +13,9 @@ export type { WorkbenchErrorCode } from './errors';
 /** Legal workbench id: lowercase ASCII, starts alphanumeric, at most 64 chars. */
 export const WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
+/** Longest legal id, in characters; collision suffixes must not push past it. */
+export const WORKBENCH_ID_MAX_LENGTH = 64;
+
 /** One grid cell: the persisted identity is `id`, `type` picks the renderer. */
 export interface WorkbenchPanel {
   id: string;

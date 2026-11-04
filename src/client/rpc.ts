@@ -14,11 +14,12 @@ import type {
   WorkbenchRpcMethod,
   WorkbenchRpcResult,
 } from '../shared/workbench/protocol';
+import { WORKBENCH_RPC_ENDPOINT } from '../shared/workbench/protocol';
 import type { Workbench } from '../shared/workbench/schema';
 
 /** `/api` carrier channel; the real endpoint name travels in the body. */
 const CARRIER_CHANNEL = '/api';
-const CARRIER_ENDPOINT = 'workbench';
+const CARRIER_ENDPOINT = WORKBENCH_RPC_ENDPOINT;
 
 /** Upper bound for waiting on the shell's connection service. */
 const CONNECTION_WAIT_MS = 5000;

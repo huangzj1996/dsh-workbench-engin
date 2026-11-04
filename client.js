@@ -44,9 +44,12 @@ __export(index_exports, {
 module.exports = __toCommonJS(index_exports);
 var React12 = __toESM(require("react"), 1);
 
+// src/shared/workbench/protocol.ts
+var WORKBENCH_RPC_ENDPOINT = "workbench";
+
 // src/client/rpc.ts
 var CARRIER_CHANNEL = "/api";
-var CARRIER_ENDPOINT = "workbench";
+var CARRIER_ENDPOINT = WORKBENCH_RPC_ENDPOINT;
 var CONNECTION_WAIT_MS = 5e3;
 var WorkbenchRpcError = class extends Error {
   code;
@@ -335,6 +338,7 @@ function describeError(error) {
 
 // src/shared/workbench/schema.ts
 var WORKBENCH_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+var WORKBENCH_ID_MAX_LENGTH = 64;
 var DEFAULT_COLS = 4;
 var DEFAULT_SPAN = 2;
 
@@ -360,7 +364,10 @@ function generateWorkbenchId(name2, takenIds, random = Math.random) {
   let candidate = base;
   let attempt = 2;
   while (taken.has(candidate)) {
-    candidate = `${base}-${attempt}`;
+    const suffix = `-${attempt}`;
+    const room = Math.max(1, WORKBENCH_ID_MAX_LENGTH - suffix.length);
+    const trimmed = base.slice(0, room).replace(/-+$/g, "") || "wb";
+    candidate = `${trimmed}${suffix}`;
     attempt += 1;
   }
   return candidate;

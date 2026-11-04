@@ -19,6 +19,8 @@ export type WorkbenchErrorCode =
   | 'picker-unavailable'
   /** The shell's folder chooser was offered but opening it failed. */
   | 'picker-failed'
+  /** The request reached the route but did not follow the wire contract. */
+  | 'invalid-request'
   /** Last-resort code for unexpected failures and unknown RPC methods. */
   | 'internal';
 
@@ -34,6 +36,7 @@ const BASE_MESSAGE: Record<WorkbenchErrorCode, string> = {
   'too-large': '文件超过 256KB 上限',
   'picker-unavailable': '系统文件夹选择框不可用，请手动填写路径',
   'picker-failed': '系统文件夹选择框调用失败，请手动填写路径',
+  'invalid-request': '请求不符合 RPC 协议',
   internal: '操作失败',
 };
 

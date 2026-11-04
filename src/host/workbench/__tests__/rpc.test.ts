@@ -265,7 +265,7 @@ describe('workbench RPC', () => {
     expect(body.result.error?.message).toContain('nope');
   });
 
-  it('rejects an envelope whose payload is not a workbench call', async () => {
+  it('rejects an envelope whose payload is not a workbench call in a real envelope', async () => {
     const dshHome = await tempDir('dsh-home');
     const rpc = createWorkbenchRpc({ dshHome });
     const response = await rpc.route(
@@ -280,7 +280,63 @@ describe('workbench RPC', () => {
       }),
     );
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      type: 'server-response',
+      rpcId: 'rpc-4',
+      result: {
+        ok: false,
+        error: { code: 'invalid-request', message: expect.any(String), details: {} },
+      },
+    });
+  });
+
+  it('answers a request sent to the wrong shell endpoint with a correlated envelope', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: 'client-request',
+          rpcId: 'rpc-5',
+          method: 'not-workbench',
+          payload: { method: 'getRootConfig', payload: {} },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      rpcId: string;
+      result: { ok: boolean; error?: { code: string; message: string } };
+    };
+    expect(body.rpcId).toBe('rpc-5');
+    expect(body.result.ok).toBe(false);
+    expect(body.result.error?.code).toBe('invalid-request');
+    expect(body.result.error?.message).toContain('端点');
+  });
+
+  it('answers a correlated request with the wrong message type in a real envelope', async () => {
+    const dshHome = await tempDir('dsh-home');
+    const rpc = createWorkbenchRpc({ dshHome });
+    const response = await rpc.route(
+      new Request('http://localhost/api/workbench', {
+        method: 'POST',
+        body: JSON.stringify({
+          rpcId: 'rpc-6',
+          method: 'workbench',
+          payload: { method: 'getRootConfig', payload: {} },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      type: 'server-response',
+      rpcId: 'rpc-6',
+      result: { ok: false, error: { code: 'invalid-request' } },
+    });
   });
 });
 

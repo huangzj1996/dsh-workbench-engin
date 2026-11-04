@@ -64,6 +64,20 @@ export type WorkbenchRpcResult =
 /** Correlation-id shape the shell's generic RPC caller accepts. */
 const RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
+/** The one shell RPC endpoint this route serves (`/api/<endpoint>`). */
+export const WORKBENCH_RPC_ENDPOINT = 'workbench';
+
+/**
+ * Read the correlation id off an envelope-like body, or `null` when the body
+ * cannot carry one. A readable id lets the Host answer with a real envelope
+ * instead of a bare 400 the Client can only report as a transport failure.
+ */
+export function readWorkbenchRpcId(body: unknown): string | null {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+  const rpcId = (body as Record<string, unknown>)['rpcId'];
+  return typeof rpcId === 'string' && RPC_ID_PATTERN.test(rpcId) ? rpcId : null;
+}
+
 /** The envelope the shell's `connection.rpc.call` posts to our route. */
 export interface WorkbenchClientRequest {
   type: 'client-request';
@@ -104,11 +118,10 @@ export function parseWorkbenchCall(payload: unknown): WorkbenchCall | null {
  * inventing an rpcId the Client would then reject as a mismatch.
  */
 export function parseWorkbenchClientRequest(body: unknown): WorkbenchClientRequest | null {
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) return null;
+  const rpcId = readWorkbenchRpcId(body);
+  if (rpcId === null) return null;
   const record = body as Record<string, unknown>;
   if (record['type'] !== 'client-request') return null;
-  const rpcId = record['rpcId'];
-  if (typeof rpcId !== 'string' || !RPC_ID_PATTERN.test(rpcId)) return null;
   const method = record['method'];
   if (typeof method !== 'string' || method === '') return null;
   return { type: 'client-request', rpcId, method, payload: record['payload'] };

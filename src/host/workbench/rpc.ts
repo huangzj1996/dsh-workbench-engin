@@ -10,6 +10,8 @@ import { WorkbenchStoreError } from '../../shared/workbench/schema';
 import {
   parseWorkbenchCall,
   parseWorkbenchClientRequest,
+  readWorkbenchRpcId,
+  WORKBENCH_RPC_ENDPOINT,
   workbenchServerResponse,
   type WorkbenchRpcMethod,
   type WorkbenchRpcResult,
@@ -98,6 +100,16 @@ export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
     }
   }
 
+  /** A wire-contract failure carried in a real envelope so the Client can show it. */
+  function invalidRequest(detail: string): WorkbenchRpcResult {
+    return failure(new WorkbenchStoreError('invalid-request', detail));
+  }
+
+  /** Answer a correlated but malformed request without inventing an rpcId. */
+  function envelopeInvalidRequest(rpcId: string, detail: string): Response {
+    return Response.json(workbenchServerResponse(rpcId, invalidRequest(detail)));
+  }
+
   async function route(request: Request): Promise<Response> {
     if (request.method !== 'POST') {
       return new Response('method not allowed', { status: 405 });
@@ -108,20 +120,30 @@ export function createWorkbenchRpc(options: WorkbenchRpcOptions): WorkbenchRpc {
     } catch {
       return new Response('request body is not JSON', { status: 400 });
     }
+    const rpcId = readWorkbenchRpcId(body);
+    if (rpcId === null) {
+      // Without a correlation id no reply can satisfy the shell's rpcId check,
+      // so an uncorrelatable request stays a bare 400.
+      return new Response('invalid client-request envelope', { status: 400 });
+    }
     const envelope = parseWorkbenchClientRequest(body);
     if (envelope === null) {
-      // The shell rejects a reply that invents an rpcId ("rpcId mismatch"), so a
-      // malformed request becomes a plain 400 the Client reports as transport failure.
-      return new Response('invalid client-request envelope', { status: 400 });
+      return envelopeInvalidRequest(rpcId, '请求不符合外壳 client-request 信封约定');
+    }
+    if (envelope.method !== WORKBENCH_RPC_ENDPOINT) {
+      return envelopeInvalidRequest(
+        rpcId,
+        `未知的 RPC 端点：${envelope.method}（期望 ${WORKBENCH_RPC_ENDPOINT}）`,
+      );
     }
     // The envelope's `method` is the shell endpoint name (`workbench`); the
     // workbench method lives one level deeper, in the envelope's payload.
     const call = parseWorkbenchCall(envelope.payload);
     if (call === null) {
-      return new Response('invalid workbench call payload', { status: 400 });
+      return envelopeInvalidRequest(rpcId, '请求缺少 workbench 方法');
     }
     const result = await dispatch({ method: call.method, payload: call.payload });
-    return Response.json(workbenchServerResponse(envelope.rpcId, result));
+    return Response.json(workbenchServerResponse(rpcId, result));
   }
 
   return { dispatch, route };

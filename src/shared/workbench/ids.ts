@@ -5,7 +5,7 @@
  * lowercase ASCII with dashes; a name that slugifies to nothing (for example a
  * purely Chinese name) falls back to a random `wb-` id.
  */
-import { WORKBENCH_ID_PATTERN } from './schema';
+import { WORKBENCH_ID_MAX_LENGTH, WORKBENCH_ID_PATTERN } from './schema';
 
 /** Random-id alphabet and length used by the `wb-` fallback. */
 const RANDOM_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -48,7 +48,12 @@ export function generateWorkbenchId(
   let candidate = base;
   let attempt = 2;
   while (taken.has(candidate)) {
-    candidate = `${base}-${attempt}`;
+    // The suffix must not push the id past the schema's 64-character limit, or
+    // a long name would generate an id its own validator rejects.
+    const suffix = `-${attempt}`;
+    const room = Math.max(1, WORKBENCH_ID_MAX_LENGTH - suffix.length);
+    const trimmed = base.slice(0, room).replace(/-+$/g, '') || 'wb';
+    candidate = `${trimmed}${suffix}`;
     attempt += 1;
   }
   return candidate;

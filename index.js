@@ -11,6 +11,7 @@ var BASE_MESSAGE = {
   "too-large": "\u6587\u4EF6\u8D85\u8FC7 256KB \u4E0A\u9650",
   "picker-unavailable": "\u7CFB\u7EDF\u6587\u4EF6\u5939\u9009\u62E9\u6846\u4E0D\u53EF\u7528\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8DEF\u5F84",
   "picker-failed": "\u7CFB\u7EDF\u6587\u4EF6\u5939\u9009\u62E9\u6846\u8C03\u7528\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u586B\u5199\u8DEF\u5F84",
+  "invalid-request": "\u8BF7\u6C42\u4E0D\u7B26\u5408 RPC \u534F\u8BAE",
   internal: "\u64CD\u4F5C\u5931\u8D25"
 };
 var WorkbenchStoreError = class extends Error {
@@ -91,6 +92,12 @@ function serializeWorkbench(workbench) {
 
 // src/shared/workbench/protocol.ts
 var RPC_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
+var WORKBENCH_RPC_ENDPOINT = "workbench";
+function readWorkbenchRpcId(body) {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const rpcId = body["rpcId"];
+  return typeof rpcId === "string" && RPC_ID_PATTERN.test(rpcId) ? rpcId : null;
+}
 function parseWorkbenchCall(payload) {
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return null;
   const record = payload;
@@ -98,11 +105,10 @@ function parseWorkbenchCall(payload) {
   return { method: record["method"], payload: record["payload"] };
 }
 function parseWorkbenchClientRequest(body) {
-  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const rpcId = readWorkbenchRpcId(body);
+  if (rpcId === null) return null;
   const record = body;
   if (record["type"] !== "client-request") return null;
-  const rpcId = record["rpcId"];
-  if (typeof rpcId !== "string" || !RPC_ID_PATTERN.test(rpcId)) return null;
   const method = record["method"];
   if (typeof method !== "string" || method === "") return null;
   return { type: "client-request", rpcId, method, payload: record["payload"] };
@@ -585,6 +591,12 @@ function createWorkbenchRpc(options) {
       return failure(error);
     }
   }
+  function invalidRequest(detail) {
+    return failure(new WorkbenchStoreError("invalid-request", detail));
+  }
+  function envelopeInvalidRequest(rpcId, detail) {
+    return Response.json(workbenchServerResponse(rpcId, invalidRequest(detail)));
+  }
   async function route(request) {
     if (request.method !== "POST") {
       return new Response("method not allowed", { status: 405 });
@@ -595,16 +607,26 @@ function createWorkbenchRpc(options) {
     } catch {
       return new Response("request body is not JSON", { status: 400 });
     }
+    const rpcId = readWorkbenchRpcId(body);
+    if (rpcId === null) {
+      return new Response("invalid client-request envelope", { status: 400 });
+    }
     const envelope = parseWorkbenchClientRequest(body);
     if (envelope === null) {
-      return new Response("invalid client-request envelope", { status: 400 });
+      return envelopeInvalidRequest(rpcId, "\u8BF7\u6C42\u4E0D\u7B26\u5408\u5916\u58F3 client-request \u4FE1\u5C01\u7EA6\u5B9A");
+    }
+    if (envelope.method !== WORKBENCH_RPC_ENDPOINT) {
+      return envelopeInvalidRequest(
+        rpcId,
+        `\u672A\u77E5\u7684 RPC \u7AEF\u70B9\uFF1A${envelope.method}\uFF08\u671F\u671B ${WORKBENCH_RPC_ENDPOINT}\uFF09`
+      );
     }
     const call = parseWorkbenchCall(envelope.payload);
     if (call === null) {
-      return new Response("invalid workbench call payload", { status: 400 });
+      return envelopeInvalidRequest(rpcId, "\u8BF7\u6C42\u7F3A\u5C11 workbench \u65B9\u6CD5");
     }
     const result = await dispatch({ method: call.method, payload: call.payload });
-    return Response.json(workbenchServerResponse(envelope.rpcId, result));
+    return Response.json(workbenchServerResponse(rpcId, result));
   }
   return { dispatch, route };
 }
